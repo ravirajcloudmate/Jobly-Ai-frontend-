@@ -1,0 +1,10 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Black background -->
+  <rect width="32" height="32" fill="black" rx="6"/>
+  <!-- Head silhouette - blue -->
+  <path d="M16 4C24.84 4 32 11.16 32 20C32 28.84 24.84 36 16 36C7.16 36 0 28.84 0 20C0 11.16 7.16 4 16 4Z" fill="#3B82F6"/>
+  <!-- Brain area rectangle - darker blue -->
+  <rect x="9" y="9" width="14" height="11" rx="3" fill="#1E40AF"/>
+  <!-- Play button - black triangle -->
+  <path d="M12.5 12L12.5 20L20.5 16L12.5 12Z" fill="black"/>
+</svg>
