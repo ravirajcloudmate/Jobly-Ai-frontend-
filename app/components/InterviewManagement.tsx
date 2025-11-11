@@ -87,9 +87,6 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [isDeletingInvitation, setIsDeletingInvitation] = useState(false);
 
-  // OpenAI API key
-  const OPENAI_API_KEY = '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';
-
   // Generate combined summary using both profile details and PDF
   const generateCombinedSummary = async (formData: any, pdfFile: File | null) => {
     setIsGeneratingSummary(true);
