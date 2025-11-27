@@ -8,7 +8,6 @@ import {
   Users, 
   FileText, 
   BarChart3, 
-  CreditCard, 
   Settings,
   LogOut,
   Menu,
@@ -18,7 +17,8 @@ import {
   Moon,
   Loader2,
   FileCode,
-  BotMessageSquare
+  BotMessageSquare,
+  CalendarSearch
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -183,7 +183,6 @@ const Sidebar = ({ user, activeModule = 'dashboard', onModuleChange, onCollapseC
       title: 'Company',
       items: [
         { id: 'profile', label: 'Company Profile', icon: Building2 },
-        { id: 'subscription', label: 'Subscription & Billing', icon: CreditCard },
         { id: 'settings', label: 'Settings & Security', icon: Settings },
       ],
     },
@@ -194,6 +193,7 @@ const Sidebar = ({ user, activeModule = 'dashboard', onModuleChange, onCollapseC
         { id: 'interviews', label: 'Interview Management', icon: Users },
         { id: 'interview-live', label: 'Interview Live', icon: Video },
         { id: 'prompt-template', label: 'AI Agent', icon: BotMessageSquare },
+        { id: 'calendar', label: 'Calendar', icon: CalendarSearch },
       ],
     },
     {

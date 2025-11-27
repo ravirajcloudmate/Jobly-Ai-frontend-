@@ -1,7 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 import { 
   Plus, 
   Users, 
@@ -9,8 +8,6 @@ import {
   FileText, 
   TrendingUp,
   Clock,
-  CheckCircle,
-  AlertCircle,
   Calendar,
   Loader2,
   Bot,
@@ -38,8 +35,7 @@ export function DashboardHome({ user, globalRefreshKey }: DashboardHomeProps) {
     { label: 'This Month Hires', value: '0', icon: TrendingUp, color: 'text-purple-600' },
   ]);
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
-  const [upcomingTasks, setUpcomingTasks] = useState<any[]>([]);
-  const [subscriptionData, setSubscriptionData] = useState<any>(null);
+  const [calendarNotifications, setCalendarNotifications] = useState<any[]>([]);
   const [activeJobs, setActiveJobs] = useState<any[]>([]);
   const [pausedJobs, setPausedJobs] = useState<any[]>([]);
 
@@ -182,16 +178,7 @@ export function DashboardHome({ user, globalRefreshKey }: DashboardHomeProps) {
             { label: 'This Month Hires', value: '0', icon: TrendingUp, color: 'text-purple-600' },
           ]);
           setRecentActivity([]);
-          setUpcomingTasks([{
-            task: 'Complete your profile setup to start hiring',
-            priority: 'high',
-            due: 'Today'
-          }]);
-          setSubscriptionData({
-            plan: 'Free',
-            status: 'active',
-            interviewsUsed: 0
-          });
+          setCalendarNotifications([]);
           setLoading(false);
           return;
         }
@@ -208,16 +195,7 @@ export function DashboardHome({ user, globalRefreshKey }: DashboardHomeProps) {
             { label: 'This Month Hires', value: '0', icon: TrendingUp, color: 'text-purple-600' },
           ]);
           setRecentActivity([]);
-          setUpcomingTasks([{
-            task: 'Set up your company profile to start hiring',
-            priority: 'high',
-            due: 'Today'
-          }]);
-          setSubscriptionData({
-            plan: (userData as any)?.subscription_plan || 'free',
-            status: (userData as any)?.subscription_status || 'active',
-            interviewsUsed: 0
-          });
+          setCalendarNotifications([]);
           setLoading(false);
           return;
         }
@@ -432,50 +410,66 @@ export function DashboardHome({ user, globalRefreshKey }: DashboardHomeProps) {
         activities.sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime());
         setRecentActivity(activities.slice(0, 4));
 
-        // Generate dynamic upcoming tasks based on data
-        const tasks = [];
-        
-        if (reportsResult.data && reportsResult.data.length > 0) {
-          tasks.push({
-            task: `Review ${reportsResult.data.length} pending candidate reports`,
-            priority: 'high',
-            due: 'Today'
-          });
-        }
+        // Fetch upcoming calendar events (interviews)
+        const upcomingInterviewsResult = await fetchWithFallback('interview_invitations', supabase
+          .from('interview_invitations')
+          .select(`
+            id,
+            candidate_name,
+            candidate_email,
+            interview_date,
+            interview_time,
+            job_postings (
+              job_title
+            )
+          `)
+          .eq('company_id', companyId)
+          .not('interview_date', 'is', null)
+          .gte('interview_date', new Date().toISOString().split('T')[0])
+          .order('interview_date', { ascending: true })
+          .order('interview_time', { ascending: true })
+          .limit(5));
 
-        if (jobsResult.data && jobsResult.data.length > 0) {
-          tasks.push({
-            task: `Monitor ${jobsResult.data.length} active job postings for new applications`,
-            priority: 'medium',
-            due: 'This week'
-          });
-        }
+        const upcomingInterviews = (upcomingInterviewsResult.data || []).map((inv: any) => {
+          let normalizedDate = inv.interview_date;
+          if (normalizedDate) {
+            if (normalizedDate instanceof Date) {
+              normalizedDate = normalizedDate.toISOString().split('T')[0];
+            } else if (typeof normalizedDate === 'string') {
+              normalizedDate = normalizedDate.split('T')[0];
+            }
+          }
 
-        if (candidatesResult.data && candidatesResult.data.length > 5) {
-          tasks.push({
-            task: 'Schedule follow-up interviews for shortlisted candidates',
-            priority: 'medium',
-            due: 'Tomorrow'
-          });
-        }
+          // Format date for display
+          const dateObj = new Date(normalizedDate + 'T00:00:00'); // Add time to avoid timezone issues
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const todayStr = today.toISOString().split('T')[0];
+          const tomorrow = new Date(today);
+          tomorrow.setDate(tomorrow.getDate() + 1);
+          const tomorrowStr = tomorrow.toISOString().split('T')[0];
+          
+          let dateDisplay = '';
+          if (normalizedDate === todayStr) {
+            dateDisplay = 'Today';
+          } else if (normalizedDate === tomorrowStr) {
+            dateDisplay = 'Tomorrow';
+          } else {
+            dateDisplay = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: dateObj.getFullYear() !== today.getFullYear() ? 'numeric' : undefined });
+          }
 
-        // Add default task if no specific tasks
-        if (tasks.length === 0) {
-          tasks.push({
-            task: 'Create your first job posting to start hiring',
-            priority: 'low',
-            due: 'This week'
-          });
-        }
-
-        setUpcomingTasks(tasks);
-
-        // Set subscription data
-        setSubscriptionData({
-          plan: (userData as any)?.subscription_plan || 'free',
-          status: (userData as any)?.subscription_status || 'active',
-          interviewsUsed: interviewsResult.data?.length || 0
+          return {
+            id: inv.id,
+            candidate_name: inv.candidate_name || inv.candidate_email || 'Candidate',
+            job_title: inv.job_postings?.job_title || 'Interview',
+            date: normalizedDate,
+            dateDisplay: dateDisplay,
+            time: inv.interview_time || 'TBD',
+            fullDate: dateObj
+          };
         });
+
+        setCalendarNotifications(upcomingInterviews);
 
       } catch (error) {
         console.error('Error fetching dashboard data:', JSON.stringify(error, null, 2));
@@ -717,37 +711,61 @@ const getActivityVisuals = (activity: any) => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        {/* Subscription Status */}
+        {/* Calendar Notifications */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <CheckCircle className="h-5 w-5 text-green-600" />
-              Subscription Status
+            <CardTitle className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Calendar className="h-5 w-5 text-blue-600" />
+                Upcoming Interviews
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => router.push('/calendar')}
+                className="text-xs"
+              >
+                View Calendar
+              </Button>
             </CardTitle>
+            <CardDescription>Your scheduled interviews and events</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <span>Current Plan:</span>
-                <Badge variant="secondary">{subscriptionData?.plan || 'Free'}</Badge>
-              </div>
-              <div className="flex justify-between items-center">
-                <span>Interviews Used:</span>
-                <span>{subscriptionData?.interviewsUsed || 0} / {subscriptionData?.plan === 'Free' ? '10' : '∞'}</span>
-              </div>
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Plan Usage</span>
-                  <span>{subscriptionData?.plan === 'Free' ? `${10 - (subscriptionData?.interviewsUsed || 0)} remaining` : 'Unlimited'}</span>
+              {calendarNotifications.length > 0 ? (
+                calendarNotifications.map((notification, index) => (
+                  <div 
+                    key={notification.id || index} 
+                    className="flex items-start gap-3 p-3 rounded-lg border bg-muted/20 hover:bg-muted/40 transition-colors cursor-pointer"
+                    onClick={() => router.push('/calendar')}
+                  >
+                    <div className="flex-shrink-0 mt-0.5">
+                      <Calendar className="h-4 w-4 text-blue-600" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{notification.candidate_name}</p>
+                      <p className="text-xs text-muted-foreground truncate">{notification.job_title}</p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <Badge variant="outline" className="text-xs">
+                          {notification.dateDisplay}
+                        </Badge>
+                        {notification.time && notification.time !== 'TBD' && (
+                          <span className="text-xs text-muted-foreground flex items-center gap-1">
+                            <Clock className="h-3 w-3" />
+                            {notification.time}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  <Calendar className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">No upcoming interviews</p>
+                  <p className="text-xs">Schedule interviews to see them here</p>
                 </div>
-                <Progress 
-                  value={subscriptionData?.plan === 'Free' ? ((subscriptionData?.interviewsUsed || 0) / 10) * 100 : 100} 
-                  className="h-2" 
-                />
-              </div>
-              <Button variant="outline" size="sm" className="w-full">
-                Upgrade Plan
-              </Button>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -785,41 +803,6 @@ const getActivityVisuals = (activity: any) => {
           </CardContent>
         </Card>
       </div>
-
-      {/* Upcoming Tasks */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Calendar className="h-5 w-5" />
-            Upcoming Tasks
-          </CardTitle>
-          <CardDescription>Action items requiring your attention</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {upcomingTasks.map((task, index) => (
-              <div key={index} className="flex items-start gap-3 p-3 rounded-lg border bg-muted/20">
-                <AlertCircle className={`h-4 w-4 mt-0.5 ${
-                  task.priority === 'high' ? 'text-red-600' : 
-                  task.priority === 'medium' ? 'text-orange-600' : 'text-blue-600'
-                }`} />
-                <div className="flex-1">
-                  <p className="text-sm font-medium">{task.task}</p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <Badge variant={
-                      task.priority === 'high' ? 'destructive' : 
-                      task.priority === 'medium' ? 'default' : 'secondary'
-                    } className="text-xs">
-                      {task.priority}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">Due: {task.due}</span>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
       </div> {/* End of scrollable content */}
     </div>
   );

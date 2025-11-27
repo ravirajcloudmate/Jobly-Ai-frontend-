@@ -152,6 +152,22 @@ export function CompanyProfile({ user, globalRefreshKey }: CompanyProfileProps) 
         if (cid) {
           setEffectiveCompanyId(cid);
           
+          // Load company name from companies table (Settings module)
+          const { data: companyData, error: companyError } = await supabase
+            .from('companies')
+            .select('name')
+            .eq('id', cid)
+            .maybeSingle();
+
+          if (companyError) {
+            console.error('Error fetching company data:', companyError);
+          }
+
+          if (companyData?.name) {
+            setCompanyName(companyData.name);
+            console.log('Loaded company name from companies table:', companyData.name);
+          }
+          
           // Load all data from company_branding table
           const { data: brandingData, error: brandingError } = await supabase
             .from('company_branding')
@@ -166,29 +182,26 @@ export function CompanyProfile({ user, globalRefreshKey }: CompanyProfileProps) 
           console.log('Loaded branding data:', brandingData);
 
           if (brandingData) {
-            // Set all fields from company_branding table
-            setCompanyName(brandingData.company_name || '');
+            // Set all fields from company_branding table (except company name which comes from companies table)
             setIndustry(brandingData.industry || 'Technology Services');
             setCompanyLogo(brandingData.logo_url || '/logo.svg');
-            setWelcomeMessage(brandingData.welcome_message || `Welcome to ${brandingData.company_name || user.company || 'Our Company'} AI Interview`);
+            setWelcomeMessage(brandingData.welcome_message || `Welcome to ${companyData?.name || user.company || 'Our Company'} AI Interview`);
             setPrimaryColor(brandingData.primary_color || '#030213');
             setSecondaryColor(brandingData.secondary_color || '#6366F1');
             setBackgroundColor(brandingData.background_color || '#F8FAFC');
             
-            console.log('Set company name to:', brandingData.company_name);
             console.log('Set industry to:', brandingData.industry);
-            updateBrandingCache(brandingData.company_name || null, brandingData.logo_url || null, cid);
+            updateBrandingCache(companyData?.name || null, brandingData.logo_url || null, cid);
           } else {
             console.log('No branding data found, setting defaults');
             // Set default values if no branding data exists
-            setCompanyName(user?.company || '');
             setIndustry('Technology Services');
             setCompanyLogo('/logo.svg');
-            setWelcomeMessage(`Welcome to ${user?.company || 'Our Company'} AI Interview`);
+            setWelcomeMessage(`Welcome to ${companyData?.name || user?.company || 'Our Company'} AI Interview`);
             setPrimaryColor('#030213');
             setSecondaryColor('#6366F1');
             setBackgroundColor('#F8FAFC');
-            updateBrandingCache(user?.company || null, '/logo.svg', cid);
+            updateBrandingCache(companyData?.name || null, '/logo.svg', cid);
           }
 
           // Load team members and pending invitations
@@ -240,11 +253,26 @@ export function CompanyProfile({ user, globalRefreshKey }: CompanyProfileProps) 
     if (globalRefreshKey && globalRefreshKey > 0) {
       console.log('CompanyProfile: Global refresh triggered');
       if (effectiveCompanyId) {
+        // Reload company name from companies table when Settings updates it
+        const reloadCompanyName = async () => {
+          const { data: companyData } = await supabase
+            .from('companies')
+            .select('name')
+            .eq('id', effectiveCompanyId)
+            .maybeSingle();
+          
+          if (companyData?.name) {
+            setCompanyName(companyData.name);
+            console.log('Company name refreshed from Settings:', companyData.name);
+            updateBrandingCache(companyData.name, companyLogo, effectiveCompanyId);
+          }
+        };
+        reloadCompanyName();
         // Trigger a reload by updating the reload key
         setReloadKey(globalRefreshKey);
       }
     }
-  }, [globalRefreshKey, effectiveCompanyId]);
+  }, [globalRefreshKey, effectiveCompanyId, companyLogo]);
 
   // Realtime: update branding and team sections live
   useEffect(() => {
@@ -566,10 +594,7 @@ export function CompanyProfile({ user, globalRefreshKey }: CompanyProfileProps) 
     setSuccess(null);
     
     try {
-      // Validate required fields
-      if (!companyName.trim()) {
-        throw new Error('Company name is required');
-      }
+      // Validate required fields (company name is read-only, loaded from companies table)
       if (!industry.trim()) {
         throw new Error('Industry is required');
       }
@@ -579,57 +604,31 @@ export function CompanyProfile({ user, globalRefreshKey }: CompanyProfileProps) 
       const authUserId = authData?.user?.id;
       if (!authUserId) throw new Error('User not authenticated');
 
-      console.log('Saving company data:', { companyName, industry, companyLogo });
-
-      if (!cid) {
-        // Create a new company for this user
-        console.log('Creating new company for user:', authUserId);
-        const { data: company, error: cErr } = await supabase
+      // Get current company name from companies table (don't use state as it's read-only)
+      let currentCompanyName = companyName;
+      if (cid) {
+        const { data: companyData } = await supabase
           .from('companies')
-          .insert({ 
-            name: companyName.trim() || `${user?.name || 'User'}'s Company`,
-            industry: industry.trim() || 'Technology',
-            description: `Company created by ${user?.name || user?.email || 'User'}`
-          })
-          .select('id, name')
-          .single();
-        
-        if (cErr) {
-          console.error('Company creation error:', cErr);
-          console.error('Error details:', JSON.stringify(cErr, null, 2));
-          throw new Error(cErr.message || cErr.details || 'Failed to create company');
+          .select('name')
+          .eq('id', cid)
+          .maybeSingle();
+        if (companyData?.name) {
+          currentCompanyName = companyData.name;
         }
-        
-        console.log('New company created successfully:', company);
-        cid = company.id;
-        setEffectiveCompanyId(company.id);
-        
-        // Link user to the new company as admin
-        const { error: userUpdateError } = await supabase
-          .from('users')
-          .update({ 
-            company_id: company.id, 
-            role: 'admin'
-          })
-          .eq('id', authUserId);
-        
-        if (userUpdateError) {
-          console.error('User update error:', userUpdateError);
-          console.error('User update error details:', JSON.stringify(userUpdateError, null, 2));
-          throw new Error(userUpdateError.message || userUpdateError.details || 'Failed to link user to company');
-        }
-        
-        console.log('User linked to new company as admin');
-        
-        // Reload team members to show the current user as the first member
-        await loadTeamMembers(company.id);
       }
 
-      // Save all data to company_branding table using the updated RPC function
-      console.log('Saving all data to company_branding...');
+      console.log('Saving company branding data:', { industry, companyLogo, companyName: currentCompanyName });
+
+      if (!cid) {
+        // If no company exists, user should create it in Settings first
+        throw new Error('Please create a company in Settings first');
+      }
+
+      // Save all data to company_branding table (excluding company name which is in companies table)
+      console.log('Saving branding data to company_branding...');
       const { data: savedData, error: brandingError } = await supabase.rpc('upsert_company_branding', {
         p_company_id: cid,
-        p_company_name: companyName.trim(),
+        p_company_name: currentCompanyName, // Use from companies table, not editable
         p_industry: industry.trim(),
         p_logo_url: companyLogo,
         p_welcome_message: welcomeMessage,
@@ -645,14 +644,27 @@ export function CompanyProfile({ user, globalRefreshKey }: CompanyProfileProps) 
       }
       
       console.log('All data saved successfully:', savedData);
-      setSuccess(`✅ Company "${companyName}" and industry "${industry}" saved successfully!`);
+      setSuccess(`✅ Industry "${industry}" and branding saved successfully!`);
+      
+      // Reload company name from companies table to ensure it's up to date
+      if (cid) {
+        const { data: updatedCompanyData } = await supabase
+          .from('companies')
+          .select('name')
+          .eq('id', cid)
+          .maybeSingle();
+        if (updatedCompanyData?.name) {
+          setCompanyName(updatedCompanyData.name);
+          currentCompanyName = updatedCompanyData.name;
+        }
+      }
       
       // Update auth user metadata with company info
       const { data: currentAuthData } = await supabase.auth.getUser();
       if (currentAuthData?.user) {
         await supabase.auth.updateUser({
           data: {
-            company_name: companyName,
+            company_name: currentCompanyName,
             company_id: cid
           }
         });
@@ -660,7 +672,7 @@ export function CompanyProfile({ user, globalRefreshKey }: CompanyProfileProps) 
       }
       
       // Broadcast company name update to other components
-      updateBrandingCache(companyName, companyLogo, cid);
+      updateBrandingCache(currentCompanyName, companyLogo, cid);
       
       // Trigger global refresh
       window.dispatchEvent(new Event('refresh'));
@@ -899,7 +911,16 @@ export function CompanyProfile({ user, globalRefreshKey }: CompanyProfileProps) 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <Label htmlFor="company-name">Company Name</Label>
-                  <Input id="company-name" value={companyName} onChange={(e) => setCompanyName(e.target.value)} className="mt-1" />
+                  <Input 
+                    id="company-name" 
+                    value={companyName} 
+                    disabled
+                    readOnly
+                    className="mt-1 bg-gray-50 cursor-not-allowed" 
+                  />
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Company name can only be edited in <a href="/settings" className="text-blue-600 hover:underline font-medium">Settings</a>
+                  </p>
                 </div>
                 <div>
                   <Label htmlFor="industry">Industry</Label>

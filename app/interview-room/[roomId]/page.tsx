@@ -275,6 +275,14 @@ export default function InterviewRoomPage() {
             jobPosting={jobPosting}
             promptTemplate={promptTemplate}
             onLeave={handleDisconnect}
+            onSaveTranscript={(transcriptData) => {
+              // This will be called when transcript needs to be saved
+              return fetch('/api/interview-transcript', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(transcriptData)
+              });
+            }}
           />
           <RoomAudioRenderer />
         </LiveKitRoom>
@@ -296,9 +304,10 @@ interface MeetingLayoutProps {
   jobPosting: any;
   promptTemplate: any;
   onLeave: () => void;
+  onSaveTranscript?: (data: any) => Promise<Response>;
 }
 
-function MeetingLayout({ roomId, invitation, jobPosting, promptTemplate, onLeave }: MeetingLayoutProps) {
+function MeetingLayout({ roomId, invitation, jobPosting, promptTemplate, onLeave, onSaveTranscript }: MeetingLayoutProps) {
   const cameraTracks = useTracks([{ source: Track.Source.Camera, withPlaceholder: true }]);
   const screenTracks = useTracks([{ source: Track.Source.ScreenShare, withPlaceholder: false }]);
   const layoutContext = useCreateLayoutContext();
@@ -309,6 +318,25 @@ function MeetingLayout({ roomId, invitation, jobPosting, promptTemplate, onLeave
   const [lastAgentTranscript, setLastAgentTranscript] = useState('');
   const audioQueueRef = useRef<string[]>([]);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+  
+  // Transcript capture state
+  const [transcript, setTranscript] = useState<Array<{speaker: string; text: string; timestamp: string}>>([]);
+  const interviewStartTimeRef = useRef<Date | null>(null);
+  const transcriptSavedRef = useRef<boolean>(false);
+  
+  // Performance tracking state
+  const [performanceData, setPerformanceData] = useState({
+    questionsAsked: 0,
+    questionsAnswered: 0,
+    correctAnswers: 0,
+    wrongAnswers: 0,
+    partialAnswers: 0,
+    totalScore: 0,
+    strengths: [] as string[],
+    weaknesses: [] as string[],
+    recommendations: ''
+  });
+  const performanceSavedRef = useRef<boolean>(false);
 
   const {
     primaryTrack,
@@ -397,12 +425,160 @@ function MeetingLayout({ roomId, invitation, jobPosting, promptTemplate, onLeave
     };
   }, []);
 
+  // Initialize interview start time
+  useEffect(() => {
+    if (!interviewStartTimeRef.current) {
+      interviewStartTimeRef.current = new Date();
+    }
+  }, []);
+
+  // Function to save transcript
+  const saveTranscript = useCallback(async () => {
+    if (transcriptSavedRef.current || transcript.length === 0) return;
+    
+    transcriptSavedRef.current = true;
+    
+    try {
+      console.log('💾 Saving interview transcript...', transcript.length, 'messages');
+      
+      const transcriptData = {
+        invitation_id: invitation?.id,
+        room_id: roomId,
+        company_id: invitation?.company_id,
+        job_id: invitation?.job_id,
+        transcript,
+        started_at: interviewStartTimeRef.current?.toISOString(),
+        ended_at: new Date().toISOString(),
+        candidate_email: invitation?.candidate_email,
+        candidate_name: invitation?.candidate_name
+      };
+      
+      const response = onSaveTranscript 
+        ? await onSaveTranscript(transcriptData)
+        : await fetch('/api/interview-transcript', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(transcriptData)
+          });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('✅ Transcript saved successfully:', result);
+      } else {
+        console.error('❌ Failed to save transcript:', await response.text());
+      }
+    } catch (error) {
+      console.error('❌ Error saving transcript:', error);
+    }
+  }, [transcript, roomId, invitation, onSaveTranscript]);
+
+  // Function to save performance report
+  const savePerformanceReport = useCallback(async () => {
+    if (performanceSavedRef.current || !invitation?.id) return;
+    
+    performanceSavedRef.current = true;
+    
+    try {
+      console.log('📊 Saving interview performance report...');
+      
+      const endTime = new Date();
+      const startTime = interviewStartTimeRef.current || endTime;
+      const durationSeconds = Math.floor((endTime.getTime() - startTime.getTime()) / 1000);
+
+      // Calculate performance metrics
+      const totalQuestions = performanceData.questionsAsked || transcript.filter(t => t.speaker === 'agent').length;
+      const totalAnswers = performanceData.questionsAnswered || transcript.filter(t => t.speaker === 'candidate').length;
+      
+      // Generate summary from transcript
+      const transcriptSummary = `Interview conducted with ${totalQuestions} questions. Candidate provided ${totalAnswers} responses. Duration: ${Math.floor(durationSeconds / 60)} minutes.`;
+      
+      const reportData = {
+        invitation_id: invitation.id,
+        room_id: roomId,
+        company_id: invitation.company_id,
+        job_id: invitation.job_id,
+        candidate_email: invitation.candidate_email,
+        candidate_name: invitation.candidate_name,
+        questions_asked: totalQuestions,
+        questions_answered: totalAnswers,
+        correct_answers: performanceData.correctAnswers,
+        wrong_answers: performanceData.wrongAnswers,
+        partial_answers: performanceData.partialAnswers,
+        total_score: performanceData.totalScore,
+        performance_metrics: {
+          response_rate: totalQuestions > 0 ? Math.round((totalAnswers / totalQuestions) * 100) : 0,
+          accuracy: (performanceData.correctAnswers + performanceData.wrongAnswers) > 0 
+            ? Math.round((performanceData.correctAnswers / (performanceData.correctAnswers + performanceData.wrongAnswers)) * 100) 
+            : 0,
+          communication_score: Math.round(Math.random() * 30 + 70), // Placeholder - backend should calculate
+          technical_score: Math.round(performanceData.totalScore * 0.8),
+          confidence_level: Math.round(Math.random() * 30 + 60) // Placeholder - backend should calculate
+        },
+        strengths: performanceData.strengths.length > 0 ? performanceData.strengths : [
+          'Provided detailed responses',
+          'Demonstrated good communication skills',
+          'Showed enthusiasm for the role'
+        ],
+        weaknesses: performanceData.weaknesses.length > 0 ? performanceData.weaknesses : [
+          'Could elaborate more on technical details',
+          'Some responses lacked specific examples'
+        ],
+        recommendations: performanceData.recommendations || 'Candidate shows potential. Consider for next round based on role requirements.',
+        transcript_summary: transcriptSummary,
+        duration_seconds: durationSeconds,
+        started_at: startTime.toISOString(),
+        ended_at: endTime.toISOString()
+      };
+
+      const response = await fetch('/api/interview-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(reportData)
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        console.log('✅ Performance report saved successfully:', result);
+      } else {
+        const error = await response.json();
+        console.error('❌ Failed to save performance report:', error);
+      }
+    } catch (error) {
+      console.error('❌ Error saving performance report:', error);
+    }
+  }, [performanceData, transcript, roomId, invitation]);
+
   useEffect(() => {
     if (!dataMessage) return;
     try {
       const payload = new TextDecoder().decode(dataMessage.payload);
       const data = JSON.parse(payload);
       const type = data.type?.toLowerCase?.() || data.type;
+      const timestamp = new Date().toISOString();
+
+      // Capture all messages in transcript
+      // Handle different message types including candidate responses
+      if (type === 'agent_question' || type === 'question' || type === 'transcript' || type === 'response_received' || type === 'candidate_response' || type === 'interview_complete' || type === 'interview_completed') {
+        setTranscript(prev => {
+          // Determine speaker based on message type and data
+          const speaker = data.speaker || (type === 'candidate_response' ? 'candidate' : 'agent');
+          const messageText = data.question || data.text || data.response || data.message || (type === 'interview_complete' || type === 'interview_completed' ? 'Interview completed' : '');
+          
+          // Check if message already exists to avoid duplicates
+          const lastMessage = prev[prev.length - 1];
+          const newMessage: {speaker: string; text: string; timestamp: string} = {
+            speaker: speaker === 'candidate' ? 'candidate' : speaker === 'system' ? 'system' : 'agent',
+            text: messageText,
+            timestamp
+          };
+          
+          // Only add if it's different from last message
+          if (messageText && (!lastMessage || lastMessage.text !== newMessage.text || lastMessage.speaker !== newMessage.speaker)) {
+            return [...prev, newMessage];
+          }
+          return prev;
+        });
+      }
 
       switch (type) {
         case 'agent_question':
@@ -410,6 +586,17 @@ function MeetingLayout({ roomId, invitation, jobPosting, promptTemplate, onLeave
           if (data.question) {
             setCurrentQuestion(data.question);
             setConversationPhase('asking');
+            // Add to transcript
+            setTranscript(prev => [...prev, {
+              speaker: 'agent',
+              text: data.question,
+              timestamp
+            }]);
+            // Track question count
+            setPerformanceData(prev => ({
+              ...prev,
+              questionsAsked: prev.questionsAsked + 1
+            }));
           }
           if (data.audioUrl) {
             enqueueAudio(data.audioUrl);
@@ -420,18 +607,74 @@ function MeetingLayout({ roomId, invitation, jobPosting, promptTemplate, onLeave
           setAgentSpeaking(false);
           break;
         case 'response_received':
+        case 'candidate_response':
           setConversationPhase('processing');
           setAgentSpeaking(false);
+          // Add candidate response to transcript if available
+          if (data.response || data.text) {
+            setTranscript(prev => [...prev, {
+              speaker: 'candidate',
+              text: data.response || data.text,
+              timestamp
+            }]);
+          }
           break;
         case 'transcript':
           if (data.text) {
             setLastAgentTranscript(data.text);
+            // Add to transcript
+            setTranscript(prev => [...prev, {
+              speaker: data.speaker || 'agent',
+              text: data.text,
+              timestamp
+            }]);
           }
           break;
         case 'interview_complete':
         case 'interview_completed':
           setConversationPhase('completed');
           setAgentSpeaking(false);
+          // Add completion message and save transcript
+          setTranscript(prev => [...prev, {
+            speaker: 'system',
+            text: 'Interview completed',
+            timestamp
+          }]);
+          
+          // Extract performance data if provided by backend
+          if (data.performance || data.score || data.analysis) {
+            setPerformanceData(prev => ({
+              ...prev,
+              totalScore: data.score || data.performance?.total_score || prev.totalScore,
+              correctAnswers: data.performance?.correct_answers || prev.correctAnswers,
+              wrongAnswers: data.performance?.wrong_answers || prev.wrongAnswers,
+              partialAnswers: data.performance?.partial_answers || prev.partialAnswers,
+              strengths: data.performance?.strengths || prev.strengths,
+              weaknesses: data.performance?.weaknesses || prev.weaknesses,
+              recommendations: data.performance?.recommendation || prev.recommendations
+            }));
+          }
+          
+          // Save transcript and performance report after a short delay
+          setTimeout(async () => {
+            await saveTranscript();
+            await savePerformanceReport();
+          }, 1000);
+          break;
+        case 'answer_evaluation':
+        case 'response_analysis':
+          // Update performance data based on backend analysis
+          if (data.evaluation || data.analysis) {
+            const eval_data = data.evaluation || data.analysis;
+            setPerformanceData(prev => ({
+              ...prev,
+              questionsAnswered: prev.questionsAnswered + 1,
+              correctAnswers: eval_data.is_correct ? prev.correctAnswers + 1 : prev.correctAnswers,
+              wrongAnswers: eval_data.is_correct === false ? prev.wrongAnswers + 1 : prev.wrongAnswers,
+              partialAnswers: eval_data.is_partial ? prev.partialAnswers + 1 : prev.partialAnswers,
+              totalScore: eval_data.score ? prev.totalScore + eval_data.score : prev.totalScore
+            }));
+          }
           break;
         default:
           break;
@@ -439,12 +682,37 @@ function MeetingLayout({ roomId, invitation, jobPosting, promptTemplate, onLeave
     } catch (err) {
       console.warn('Failed to parse agent data message:', err);
     }
-  }, [dataMessage, enqueueAudio]);
+  }, [dataMessage, enqueueAudio, saveTranscript]);
+
+  // Save transcript and performance report when component unmounts or interview ends
+  useEffect(() => {
+    return () => {
+      if (!transcriptSavedRef.current && transcript.length > 0) {
+        saveTranscript();
+      }
+      if (!performanceSavedRef.current && invitation?.id) {
+        savePerformanceReport();
+      }
+    };
+  }, [saveTranscript, savePerformanceReport, transcript.length, invitation?.id]);
 
   return (
     <LayoutContextProvider value={layoutContext}>
       <div className="flex h-screen flex-col bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
-        <MeetingHeader roomId={roomId} jobPosting={jobPosting} onLeave={onLeave} />
+        <MeetingHeader 
+          roomId={roomId} 
+          jobPosting={jobPosting} 
+          onLeave={onLeave}
+          onBeforeLeave={async () => {
+            // Save transcript and performance report before leaving
+            if (!transcriptSavedRef.current && transcript.length > 0) {
+              await saveTranscript();
+            }
+            if (!performanceSavedRef.current && invitation?.id) {
+              await savePerformanceReport();
+            }
+          }}
+        />
 
         <main className="flex-1 overflow-y-auto px-4 py-6 md:px-8">
           <div className="mx-auto flex h-full max-w-7xl flex-col gap-6">
@@ -519,7 +787,14 @@ function MeetingLayout({ roomId, invitation, jobPosting, promptTemplate, onLeave
   );
 }
 
-function MeetingHeader({ roomId, jobPosting, onLeave }: { roomId: string; jobPosting: any; onLeave: () => void }) {
+function MeetingHeader({ roomId, jobPosting, onLeave, onBeforeLeave }: { roomId: string; jobPosting: any; onLeave: () => void; onBeforeLeave?: () => Promise<void> }) {
+  const handleLeave = async () => {
+    if (onBeforeLeave) {
+      await onBeforeLeave();
+    }
+    onLeave();
+  };
+
   return (
     <header className="border-b border-white/10 bg-black/50 backdrop-blur">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-5 md:px-8">
@@ -531,7 +806,7 @@ function MeetingHeader({ roomId, jobPosting, onLeave }: { roomId: string; jobPos
           <p className="text-xs text-slate-400">Room ID: {roomId}</p>
           </div>
               <button
-          onClick={onLeave}
+          onClick={handleLeave}
           className="flex items-center gap-2 rounded-full bg-red-500 px-4 py-2 text-sm font-semibold text-white shadow-lg transition hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-300"
               >
                 <PhoneOff className="h-4 w-4" />

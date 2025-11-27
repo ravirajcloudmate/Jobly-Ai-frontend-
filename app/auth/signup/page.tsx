@@ -39,10 +39,13 @@ export default function SignupPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [resending, setResending] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [emailSent, setEmailSent] = useState(false)
+  const [userEmail, setUserEmail] = useState('')
   
-  const { signUp, user, loading: authLoading } = useAuth()
+  const { signUp, resendEmailVerification, user, loading: authLoading } = useAuth()
   const router = useRouter()
 
   // If already authenticated, redirect away from signup
@@ -97,8 +100,70 @@ export default function SignupPage() {
     
     if (error) {
       setError(error.message)
+      setEmailSent(false)
+      setLoading(false)
+      return
+    }
+
+    // Always try to send custom verification email
+    if (data?.user) {
+      try {
+        console.log('📧 Sending verification email via custom API...')
+        const emailResponse = await fetch('/api/send-verification-email', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            email: formData.email,
+            fullName: formData.fullName,
+            companyName: formData.companyName,
+            userId: data.user.id
+          })
+        })
+
+        const emailResult = await emailResponse.json()
+        
+        if (emailResult.success) {
+          setEmailSent(true)
+          setUserEmail(formData.email)
+          setSuccess(`Account created successfully! A verification email has been sent to ${formData.email}. Please check your inbox and spam folder.`)
+          
+          if (emailResult.previewUrl) {
+            console.log('📧 Email Preview URL:', emailResult.previewUrl)
+            // In development, show preview URL in console
+            if (process.env.NODE_ENV === 'development') {
+              console.log('💡 Development mode: Check email preview at:', emailResult.previewUrl)
+              setSuccess(`Account created! Check email preview: ${emailResult.previewUrl}`)
+            }
+          }
+        } else {
+          console.error('❌ Failed to send verification email:', emailResult)
+          setEmailSent(true) // Still show resend option
+          setUserEmail(formData.email)
+          
+          // Show detailed error message
+          const errorMsg = emailResult.error || 'Unknown error'
+          const troubleshooting = emailResult.troubleshooting
+          
+          setSuccess(`Account created successfully! However, we couldn't send the verification email.`)
+          setError(`Email error: ${errorMsg}${troubleshooting ? '. Check console for troubleshooting tips.' : ''}`)
+          
+          // Log troubleshooting info
+          if (troubleshooting) {
+            console.error('💡 Troubleshooting:', troubleshooting)
+          }
+        }
+      } catch (emailError: any) {
+        console.error('❌ Error sending verification email:', emailError)
+        setEmailSent(true)
+        setUserEmail(formData.email)
+        setSuccess(`Account created successfully! However, we couldn't send the verification email. Please use the resend button below.`)
+        setError('Email sending failed: ' + (emailError.message || 'Unknown error'))
+      }
     } else {
-      setSuccess('Account created successfully! Please check your email to verify your account.')
+      setSuccess('Account created successfully!')
+      setEmailSent(false)
     }
     
     setLoading(false)
@@ -149,6 +214,45 @@ export default function SignupPage() {
       setError(error.message)
       setLoading(false)
     }
+  }
+
+  const handleResendEmail = async () => {
+    if (!userEmail) return
+    
+    setResending(true)
+    setError('')
+    setSuccess('')
+    
+    try {
+      console.log('📧 Resending verification email via custom API...')
+      const emailResponse = await fetch('/api/send-verification-email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: userEmail,
+          fullName: formData.fullName,
+          companyName: formData.companyName
+        })
+      })
+
+      const emailResult = await emailResponse.json()
+      
+      if (emailResult.success) {
+        setSuccess('Verification email has been resent! Please check your inbox and spam folder.')
+        if (emailResult.previewUrl) {
+          console.log('📧 Email Preview URL:', emailResult.previewUrl)
+        }
+      } else {
+        setError('Failed to resend email: ' + (emailResult.error || 'Unknown error'))
+      }
+    } catch (emailError: any) {
+      console.error('❌ Error resending email:', emailError)
+      setError('Failed to resend email: ' + (emailError.message || 'Unknown error'))
+    }
+    
+    setResending(false)
   }
 
   return (
@@ -242,8 +346,32 @@ export default function SignupPage() {
             )}
             
             {success && (
-              <Alert>
-                <AlertDescription>{success}</AlertDescription>
+              <Alert className={emailSent ? 'border-blue-500 bg-blue-50' : ''}>
+                <AlertDescription className="flex flex-col gap-3">
+                  <span>{success}</span>
+                  {emailSent && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleResendEmail}
+                      disabled={resending}
+                      className="w-full sm:w-auto self-start"
+                    >
+                      {resending ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Sending...
+                        </>
+                      ) : (
+                        <>
+                          <Mail className="w-4 h-4 mr-2" />
+                          Resend Verification Email
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </AlertDescription>
               </Alert>
             )}
             

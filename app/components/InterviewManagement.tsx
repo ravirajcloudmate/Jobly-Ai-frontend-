@@ -37,9 +37,12 @@ import {
   Save,
   Trash2,
   UserPlus,
-  TvMinimalPlay
+  TvMinimalPlay,
+  MessageSquare,
+  BookOpen
 } from 'lucide-react';
 import { Notification } from './Notification';
+import { globalEvents } from '../hooks/useRealtimeUpdates';
 
 interface InterviewManagementProps {
   user: any;
@@ -86,6 +89,11 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [isDeletingInvitation, setIsDeletingInvitation] = useState(false);
+  
+  // Transcript dialog state
+  const [isTranscriptDialogOpen, setIsTranscriptDialogOpen] = useState(false);
+  const [transcriptData, setTranscriptData] = useState<any | null>(null);
+  const [loadingTranscript, setLoadingTranscript] = useState(false);
 
   // Generate combined summary using both profile details and PDF
   const generateCombinedSummary = async (formData: any, pdfFile: File | null) => {
@@ -200,45 +208,54 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
     try {
       console.log('📤 Sending candidate details to backend...');
       
-      const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
-      
-      const response = await fetch(`${BACKEND_URL}/agent/candidate-details`, {
+      // Use Next.js API route instead of direct backend call to avoid CORS issues
+      const response = await fetch('/api/send-candidate-details', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          // 👇 these key names must match backend expectations
           roomName: roomId,
+          candidateId: invitationData.candidate_email, // API route requires candidateId
           candidateName: invitationData.candidate_name || invitationData.candidate_email.split('@')[0],
           candidateEmail: invitationData.candidate_email,
           candidateSkills: invitationData.candidate_skills || '',
           experience: invitationData.experience || '',
-          candidateProjects: invitationData.candidate_projects || '',
+          projects: invitationData.candidate_projects || '',
           candidateSummary: generatedSummary || '',
           resumeAnalysis: resumeAnalysis || null,
           jobId: invitationData.job_id,
           jobTitle: jobData.job_title,
-          jobDepartment: jobData.department,
+          department: jobData.department,
           interviewDate: invitationData.interview_date || '',
           interviewTime: invitationData.interview_time || '',
-          
-          // 👇 most important key — backend will read this
           agentPrompt: agentData?.prompt_text || jobData.ai_interview_template_prompt || '',
-
-          interviewMode: jobData.interview_mode || 'Standard',
-          difficultyLevel: jobData.difficulty_level || 'Medium',
+          agentId: agentData?.id || null,
         }),
       });
 
-      if (response.ok) {
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+        console.error('❌ Failed to send candidate details:', response.status, errorData);
+        
+        // Don't block the invitation flow if backend is unavailable
+        // This is optional functionality
+        if (response.status === 503 || response.status === 404) {
+          console.warn('⚠️ Backend unavailable, but continuing with invitation creation');
+          return false; // Return false but don't throw
+        }
+        return false;
+      }
+
+      const result = await response.json();
+      if (result.success) {
         console.log('✅ Candidate details sent successfully');
         return true;
       } else {
-        const errorText = await response.text().catch(() => 'Unknown error');
-        console.error('❌ Failed to send candidate details:', response.status, errorText);
-        return false;
+        console.warn('⚠️ Candidate details sent but backend returned warning:', result);
+        return false; // Don't block flow on warnings
       }
     } catch (error: any) {
       console.error('❌ Error sending candidate details:', error);
+      // Don't throw - this is optional functionality and shouldn't block invitation creation
       return false;
     }
   };
@@ -304,6 +321,11 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
       }
 
       await loadInterviews();
+      
+      // Emit global event for calendar to update in real-time
+      globalEvents.emit('calendar:refresh');
+      globalEvents.emit('refresh');
+      
       showNotification('success', 'Deleted', 'Invitation deleted successfully.');
     } catch (e) {
       console.error('Failed to delete interview:', e);
@@ -361,6 +383,47 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
     } catch (e) {
       console.error('View load error', e);
       setError('Failed to load details');
+    }
+  };
+
+  // Open transcript dialog and fetch transcript data
+  const openTranscriptDialog = async (invitationId: string) => {
+    try {
+      setLoadingTranscript(true);
+      setTranscriptData(null);
+      setIsTranscriptDialogOpen(true);
+      setError('');
+
+      console.log('📖 Fetching transcript for invitation:', invitationId);
+
+      // Fetch transcript from API
+      const response = await fetch(`/api/interview-transcript?invitation_id=${invitationId}`);
+      
+      if (!response.ok) {
+        if (response.status === 404) {
+          console.log('No transcript found for this interview');
+          setTranscriptData(null);
+          setLoadingTranscript(false);
+          return;
+        }
+        throw new Error('Failed to fetch transcript');
+      }
+
+      const data = await response.json();
+      
+      if (data.success && data.transcript) {
+        console.log('✅ Transcript loaded successfully');
+        setTranscriptData(data.transcript);
+      } else {
+        console.log('No transcript data available');
+        setTranscriptData(null);
+      }
+    } catch (err) {
+      console.error('Error loading transcript:', err);
+      setError('Failed to load transcript');
+      setTranscriptData(null);
+    } finally {
+      setLoadingTranscript(false);
     }
   };
 
@@ -1004,12 +1067,24 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
       }
 
       // Update extra optional fields
+      // Ensure date is in YYYY-MM-DD format
+      let formattedDate = inviteForm.interview_date || null;
+      if (formattedDate) {
+        // Remove any time component if present
+        formattedDate = formattedDate.split('T')[0];
+        console.log('📅 Saving interview date:', {
+          original: inviteForm.interview_date,
+          formatted: formattedDate,
+          time: inviteForm.interview_time
+        });
+      }
+      
       const { error: updateError } = await supabase
         .from('interview_invitations')
         .update({
           candidate_skills: inviteForm.candidate_skills || null,
           experience: inviteForm.experience || null,
-          interview_date: inviteForm.interview_date || null,
+          interview_date: formattedDate,
           interview_time: inviteForm.interview_time || null,
           candidate_projects: inviteForm.candidate_projects || null
         })
@@ -1017,6 +1092,10 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
 
       if (updateError) {
         console.warn('⚠️ Failed to update extra fields:', updateError);
+      } else {
+        // Emit global event for calendar to update in real-time
+        globalEvents.emit('calendar:refresh');
+        globalEvents.emit('refresh'); // Also trigger general refresh
       }
 
       // Prepare session data
@@ -1082,21 +1161,23 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         // Continue anyway - we can still send invitation
       }
 
-      // Send candidate details to backend agent
+      // Send candidate details to backend agent (optional - doesn't block invitation)
       const candidateDetailsSent = await sendCandidateDetailsToBackend(roomId, inviteForm, jobData, agentData, generatedSummary, resumeAnalysis);
       
-      // Get LiveKit token only after candidate details are successfully sent to backend
       if (candidateDetailsSent) {
-        const candidateIdentity = `candidate-${inviteForm.candidate_email.split('@')[0]}-${Date.now()}`;
-        const tokenData = await getLivekitToken(roomId, candidateIdentity);
-        
-        if (!tokenData) {
-          console.warn('⚠️ Failed to get LiveKit token, but continuing with invitation creation');
-        } else {
-          console.log('✅ LiveKit token obtained successfully');
-        }
+        console.log('✅ Candidate details sent to backend successfully');
       } else {
-        console.warn('⚠️ Candidate details not sent to backend, skipping LiveKit token generation');
+        console.warn('⚠️ Candidate details not sent to backend, but continuing with invitation creation');
+      }
+      
+      // Get LiveKit token (essential for interview, so always attempt regardless of candidate details status)
+      const candidateIdentity = `candidate-${inviteForm.candidate_email.split('@')[0]}-${Date.now()}`;
+      const tokenData = await getLivekitToken(roomId, candidateIdentity);
+      
+      if (!tokenData) {
+        console.warn('⚠️ Failed to get LiveKit token, but continuing with invitation creation');
+      } else {
+        console.log('✅ LiveKit token obtained successfully');
       }
 
       // Generate interview link
@@ -1119,6 +1200,20 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
       let emailSent = false;
       try {
         console.log('📧 Attempting to send invitation email...');
+        // Use companyIdState (already cached) or fetch if not available
+        let finalCompanyId = companyIdState;
+        if (!finalCompanyId) {
+          const { data: userData } = await supabase
+            .from('users')
+            .select('company_id')
+            .eq('id', user.id)
+            .maybeSingle();
+          finalCompanyId = userData?.company_id || user?.company_id || null;
+        }
+        
+        console.log('📧 Using companyId for email settings:', finalCompanyId);
+        console.log('📧 Email settings will be fetched dynamically from Settings → Email Settings');
+
         const emailResponse = await fetch('/api/send-interview-invitation', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1127,7 +1222,8 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
             candidateName: inviteForm.candidate_name || inviteForm.candidate_email.split('@')[0],
             interviewLink: interviewLink,
             jobTitle: jobData.job_title,
-            companyName: user.company || 'Company'
+            companyName: user.company || 'Company',
+            companyId: finalCompanyId // Pass companyId to fetch email settings dynamically
           })
         });
 
@@ -1137,9 +1233,13 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         } else {
           const errorData = await emailResponse.json().catch(() => ({}));
           console.error('❌ Email sending failed:', errorData);
+          const errorMessage = errorData?.error || errorData?.message || 'Failed to send email invitation';
+          const errorHint = errorData?.hint || '';
+          setError(`Email Error: ${errorMessage}${errorHint ? `. ${errorHint}` : ''}`);
         }
-      } catch (emailError) {
+      } catch (emailError: any) {
         console.error('❌ Email error:', emailError);
+        setError(`Email Error: ${emailError?.message || 'Failed to send email invitation. Please check your email settings in Settings → Email Settings.'}`);
       }
 
       // Show success notification
@@ -1213,6 +1313,20 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         console.log('RPC function not available, skipping database update');
       }
 
+      // Use companyIdState (already cached) or fetch if not available
+      let finalCompanyId = companyIdState;
+      if (!finalCompanyId) {
+        const { data: userData } = await supabase
+          .from('users')
+          .select('company_id')
+          .eq('id', user.id)
+          .maybeSingle();
+        finalCompanyId = userData?.company_id || user?.company_id || null;
+      }
+      
+      console.log('📧 Sending reminder using companyId for email settings:', finalCompanyId);
+      console.log('📧 Email settings will be fetched dynamically from Settings → Email Settings');
+
       // Send reminder email
       const emailResponse = await fetch('/api/send-reminder', {
         method: 'POST',
@@ -1222,7 +1336,8 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
           candidateName: interview.candidateName,
           interviewLink: interview.link,
           jobTitle: interview.jobTitle,
-          companyName: user.company || 'Company'
+          companyName: user.company || 'Company',
+          companyId: finalCompanyId // Pass companyId to fetch email settings dynamically
         })
       });
 
@@ -1240,11 +1355,13 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
       } else {
         const errorData = await emailResponse.json().catch(() => ({}));
         console.error('Failed to send reminder:', errorData);
-        setError('Failed to send reminder: ' + (errorData.error || 'Unknown error'));
+        const errorMessage = errorData?.error || errorData?.message || 'Failed to send reminder';
+        const errorHint = errorData?.hint || '';
+        setError(`Reminder Error: ${errorMessage}${errorHint ? `. ${errorHint}` : ''}`);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error sending reminder:', err);
-      setError('Failed to send reminder');
+      setError(`Reminder Error: ${err?.message || 'Failed to send reminder. Please check your email settings in Settings → Email Settings.'}`);
     }
   };
 
@@ -1423,6 +1540,18 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
                         >
                           <Send className="h-3 w-3" />
                           <span className="text-[11px]">Remind</span>
+                        </Button>
+                      )}
+                      {(interview.status === 'Completed' || interview.status === 'completed') && (
+                        <Button 
+                          size="sm" 
+                          variant="ghost"
+                          className="h-7 px-2 text-purple-600 hover:text-purple-700"
+                          onClick={() => openTranscriptDialog(interview.invitation_id || interview.id)}
+                          title="Show Interview Transcript"
+                        >
+                          <MessageSquare className="h-3 w-3" />
+                          <span className="text-[11px]">Transcript</span>
                         </Button>
                       )}
                     </div>
@@ -1953,6 +2082,130 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Transcript Dialog */}
+      <Dialog open={isTranscriptDialogOpen} onOpenChange={setIsTranscriptDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <BookOpen className="h-5 w-5 text-purple-600" />
+              Interview Transcript
+            </DialogTitle>
+            <DialogDescription>
+              Complete conversation transcript between AI Agent and Candidate
+            </DialogDescription>
+          </DialogHeader>
+          
+          {loadingTranscript ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              <span className="ml-3 text-muted-foreground">Loading transcript...</span>
+            </div>
+          ) : transcriptData ? (
+            <ScrollArea className="flex-1 pr-4">
+              <div className="space-y-4">
+                {/* Transcript Info */}
+                <div className="bg-muted/50 rounded-lg p-4 space-y-2">
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-muted-foreground">Candidate:</span>{' '}
+                      <span className="font-medium">{transcriptData.candidate_name || transcriptData.candidate_email || 'N/A'}</span>
+                    </div>
+                    {transcriptData.duration_seconds && (
+                      <div>
+                        <span className="text-muted-foreground">Duration:</span>{' '}
+                        <span className="font-medium">
+                          {Math.floor(transcriptData.duration_seconds / 60)}m {transcriptData.duration_seconds % 60}s
+                        </span>
+                      </div>
+                    )}
+                    {transcriptData.started_at && (
+                      <div>
+                        <span className="text-muted-foreground">Started:</span>{' '}
+                        <span className="font-medium">
+                          {new Date(transcriptData.started_at).toLocaleString()}
+                        </span>
+                      </div>
+                    )}
+                    {transcriptData.ended_at && (
+                      <div>
+                        <span className="text-muted-foreground">Ended:</span>{' '}
+                        <span className="font-medium">
+                          {new Date(transcriptData.ended_at).toLocaleString()}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Transcript Messages */}
+                <div className="space-y-3">
+                  {transcriptData.transcript && Array.isArray(transcriptData.transcript) && transcriptData.transcript.length > 0 ? (
+                    transcriptData.transcript.map((message: any, index: number) => {
+                      const isAgent = message.speaker === 'agent' || message.speaker === 'system';
+                      const isCandidate = message.speaker === 'candidate';
+                      
+                      return (
+                        <div
+                          key={index}
+                          className={`rounded-lg p-4 ${
+                            isAgent
+                              ? 'bg-blue-50 border border-blue-200'
+                              : isCandidate
+                              ? 'bg-green-50 border border-green-200'
+                              : 'bg-gray-50 border border-gray-200'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <div
+                                className={`w-2 h-2 rounded-full ${
+                                  isAgent ? 'bg-blue-500' : isCandidate ? 'bg-green-500' : 'bg-gray-500'
+                                }`}
+                              />
+                              <span className="font-semibold text-sm">
+                                {isAgent ? '🤖 AI Agent' : isCandidate ? '👤 Candidate' : 'System'}
+                              </span>
+                            </div>
+                            {message.timestamp && (
+                              <span className="text-xs text-muted-foreground">
+                                {new Date(message.timestamp).toLocaleTimeString()}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-sm whitespace-pre-wrap break-words">
+                            {message.text || message.message || '(No text)'}
+                          </p>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <MessageSquare className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                      <p>No transcript messages available</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </ScrollArea>
+          ) : (
+            <div className="text-center py-12 text-muted-foreground">
+              <MessageSquare className="h-12 w-12 mx-auto mb-3 opacity-50" />
+              <p className="mb-2">No transcript found</p>
+              <p className="text-sm">
+                The transcript will be available after the interview is completed.
+              </p>
+            </div>
+          )}
+          
+          <div className="flex justify-end pt-4 border-t">
+            <Button variant="outline" onClick={() => setIsTranscriptDialogOpen(false)}>
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Notification */}
       <Notification
         type={notification.type}

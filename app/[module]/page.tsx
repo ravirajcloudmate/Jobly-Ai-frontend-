@@ -10,8 +10,8 @@ import { JobPostings } from '../components/JobPostings';
 import { InterviewManagement } from '../components/InterviewManagement';
 import { CandidateReports } from '../components/CandidateReports';
 import { AnalyticsInsights } from '../components/AnalyticsInsights';
-import { SubscriptionBilling } from '../components/SubscriptionBilling';
 import { SettingsSecurity } from '../components/SettingsSecurity';
+import { Calendar } from '../components/Calendar';
 import { ModuleLoader } from '../components/ModuleLoader';
 import { RefreshLoader } from '../components/RefreshLoader';
 import { useRouter } from 'next/navigation';
@@ -97,10 +97,10 @@ export function ModuleContent({ module }: { module: string }) {
         return <CandidateReports user={currentUserData} globalRefreshKey={globalRefreshKey} />;
       case 'analytics':
         return <AnalyticsInsights user={currentUserData} globalRefreshKey={globalRefreshKey} />;
-      case 'subscription':
-        return <SubscriptionBilling user={currentUserData} globalRefreshKey={globalRefreshKey} />;
       case 'settings':
         return <SettingsSecurity user={currentUserData} globalRefreshKey={globalRefreshKey} />;
+      case 'calendar':
+        return <Calendar user={currentUserData} globalRefreshKey={globalRefreshKey} />;
       default:
         return <DashboardHome user={currentUserData} globalRefreshKey={globalRefreshKey} />;
     }

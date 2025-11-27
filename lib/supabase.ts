@@ -10,13 +10,211 @@ if (!isConfigured) {
   console.warn('⚠️  Supabase environment variables not configured. Running in demo mode.')
 }
 
+// Custom fetch function with error handling and retry logic
+const customFetch = async (url: string, options: RequestInit = {}): Promise<Response> => {
+  // Check if browser is online (only in browser environment)
+  if (typeof window !== 'undefined' && !navigator.onLine) {
+    console.debug('🔇 Browser is offline, skipping fetch request')
+    // Only for token refresh requests, return an error response instead of throwing
+    const isTokenRefresh = url.includes('/auth/v1/token') && 
+      (options.body?.toString().includes('refresh_token') || 
+       options.body?.toString().includes('grant_type=refresh_token'))
+    if (isTokenRefresh) {
+      return new Response(
+        JSON.stringify({ error: 'Network request failed: Browser is offline' }),
+        { status: 503, statusText: 'Service Unavailable', headers: { 'Content-Type': 'application/json' } }
+      )
+    }
+    throw new Error('Network request failed: Browser is offline')
+  }
+
+  const maxRetries = 2
+  let lastError: Error | null = null
+
+  // Check if this is a TOKEN REFRESH request (not login/signup)
+  // Token refresh: /auth/v1/token with refresh_token in body
+  // Login/Signup: /auth/v1/token with password/email, or other endpoints
+  const requestBody = options.body?.toString() || ''
+  const isTokenRefreshRequest = 
+    (url.includes('/auth/v1/token') && 
+     (requestBody.includes('refresh_token') || requestBody.includes('grant_type=refresh_token'))) ||
+    url.includes('/auth/v1/refresh')
+  
+  // Don't treat login/signup requests as token refresh - let them fail normally
+  const isLoginOrSignup = 
+    requestBody.includes('grant_type=password') ||
+    (requestBody.includes('email') && requestBody.includes('password')) ||
+    url.includes('/auth/v1/signup') ||
+    url.includes('/auth/v1/verify') ||
+    url.includes('/auth/v1/otp')
+  
+  const isTokenRefresh = isTokenRefreshRequest && !isLoginOrSignup
+  
+  // For login/signup, use simpler fetch without retries to avoid interference
+  if (isLoginOrSignup) {
+    try {
+      // Verify Supabase URL is configured
+      if (!supabaseUrl || supabaseUrl === 'https://demo.supabase.co' || !supabaseAnonKey || supabaseAnonKey === 'demo-key') {
+        console.error('❌ Supabase not configured! Please set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY')
+        throw new Error('Supabase configuration missing. Please check your environment variables.')
+      }
+      
+      const response = await fetch(url, options)
+      return response
+    } catch (error: any) {
+      // Log the error for debugging
+      console.error('❌ Login/Signup request failed:', {
+        url: url.substring(0, 100),
+        error: error.message,
+        supabaseUrl: supabaseUrl?.substring(0, 50),
+        isConfigured: !!supabaseUrl && supabaseUrl !== 'https://demo.supabase.co'
+      })
+      
+      // Provide more helpful error message
+      if (error.message === 'Failed to fetch') {
+        const helpfulError = new Error(
+          `Network error: Cannot connect to Supabase. Please check:\n` +
+          `1. Your internet connection\n` +
+          `2. Supabase URL is correct: ${supabaseUrl?.substring(0, 50)}...\n` +
+          `3. Supabase service is running`
+        )
+        helpfulError.name = error.name
+        throw helpfulError
+      }
+      
+      throw error
+    }
+  }
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      // Add timeout to fetch requests (shorter for token refresh)
+      const timeout = isTokenRefresh ? 10000 : 15000
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      })
+
+      clearTimeout(timeoutId)
+
+      // If the request was successful, return the response
+      if (response.ok || response.status < 500) {
+        return response
+      }
+
+      // For 5xx errors, retry (but not for login/signup - let them fail immediately)
+      if (response.status >= 500 && attempt < maxRetries && !isLoginOrSignup) {
+        if (!isTokenRefresh) {
+          console.warn(`⚠️ Server error ${response.status}, retrying... (attempt ${attempt + 1}/${maxRetries + 1})`)
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1))) // Exponential backoff
+        continue
+      }
+
+      return response
+    } catch (error: any) {
+      lastError = error
+
+      // Handle network errors
+      if (error.name === 'AbortError') {
+        if (!isTokenRefresh) {
+          console.warn(`⚠️ Request timeout, retrying... (attempt ${attempt + 1}/${maxRetries + 1})`)
+        }
+      } else if (error.message === 'Failed to fetch' || error.name === 'TypeError' || error.message?.includes('fetch')) {
+        // Check if browser went offline
+        if (typeof window !== 'undefined' && !navigator.onLine) {
+          // Only for token refresh, return an error response instead of throwing
+          if (isTokenRefresh) {
+            return new Response(
+              JSON.stringify({ error: 'Network request failed: Browser is offline' }),
+              { status: 503, statusText: 'Service Unavailable', headers: { 'Content-Type': 'application/json' } }
+            )
+          }
+          throw new Error('Network request failed: Browser is offline')
+        }
+        
+        // For login/signup, don't retry - let them fail immediately so user sees the error
+        if (isLoginOrSignup) {
+          throw error
+        }
+        
+        if (!isTokenRefresh) {
+          console.warn(`⚠️ Network error, retrying... (attempt ${attempt + 1}/${maxRetries + 1})`)
+        }
+      } else {
+        // For other errors, don't retry for login/signup
+        if (isLoginOrSignup) {
+          throw error
+        }
+        
+        // For token refresh, continue to retry logic
+        if (isTokenRefresh) {
+          console.debug(`🔇 Unexpected error on token refresh, will retry: ${error.message}`)
+        } else {
+          // For other requests, don't retry other errors
+          throw error
+        }
+      }
+
+      // Retry with exponential backoff (only if we haven't exceeded max retries and it's not login/signup)
+      if (attempt < maxRetries && !isLoginOrSignup) {
+        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)))
+        continue
+      }
+    }
+  }
+
+  // If all retries failed, handle based on request type
+  if (lastError) {
+    // Only for TOKEN REFRESH requests, return an error response instead of throwing
+    // This allows Supabase to handle it gracefully without breaking the app
+    // Login/signup should throw errors so users can see them
+    if (isTokenRefresh) {
+      console.debug('🔇 Token refresh failed after retries, returning error response')
+      return new Response(
+        JSON.stringify({ 
+          error: 'Network request failed',
+          message: lastError.message || 'Failed to fetch',
+          code: 'NETWORK_ERROR'
+        }),
+        { 
+          status: 503, 
+          statusText: 'Service Unavailable',
+          headers: { 'Content-Type': 'application/json' }
+        }
+      )
+    }
+    
+    // For login/signup and other requests, throw the error so user sees it
+    if (!isTokenRefresh) {
+      console.error('❌ All fetch retries failed:', lastError)
+    }
+    throw lastError
+  }
+
+  // Fallback error response only for token refresh
+  if (isTokenRefresh) {
+    return new Response(
+      JSON.stringify({ error: 'Failed to fetch after retries' }),
+      { status: 503, statusText: 'Service Unavailable', headers: { 'Content-Type': 'application/json' } }
+    )
+  }
+
+  throw new Error('Failed to fetch after retries')
+}
+
 // Real-time Supabase client with optimized settings
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: true,
-    flowType: 'pkce'
+    flowType: 'pkce',
+    // Suppress token refresh errors in console
+    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
   },
   realtime: {
     params: {
@@ -30,7 +228,9 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     headers: { 
       'x-my-custom-header': 'interview-ai-system',
       'apikey': supabaseAnonKey
-    }
+    },
+    // Use custom fetch function
+    fetch: customFetch
   }
 })
 

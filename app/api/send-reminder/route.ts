@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
 import nodemailer from 'nodemailer'
+import { createClient } from '@supabase/supabase-js'
 
 export async function POST(request: Request) {
   try {
-    const { email, candidateName, interviewLink, jobTitle, companyName } = await request.json()
+    const { email, candidateName, interviewLink, jobTitle, companyName, companyId } = await request.json()
     
     if (!email || !interviewLink) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
@@ -11,29 +12,121 @@ export async function POST(request: Request) {
 
     console.log('Sending interview reminder email to:', email)
 
-    // Create email transporter (same logic as invitation)
-    let transporter;
+    // Initialize Supabase client
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     
-    if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
-      transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST,
-        port: parseInt(process.env.SMTP_PORT || '587'),
-        secure: process.env.SMTP_SECURE === 'true',
-        auth: {
-          user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS,
-        },
-      });
-    } else if (process.env.GMAIL_USER && process.env.GMAIL_PASS) {
+    let gmailUser = '';
+    let gmailPass = '';
+    let smtpHost = '';
+    let smtpUser = '';
+    let smtpPass = '';
+
+    // Try to load email settings from database if company_id is provided
+    if (companyId && supabaseUrl && supabaseServiceKey) {
+      try {
+        const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+        
+        // Try to get from company_settings table
+        const { data: settingsData } = await supabaseAdmin
+          .from('company_settings')
+          .select('settings')
+          .eq('company_id', companyId)
+          .eq('category', 'email')
+          .maybeSingle();
+
+        if (settingsData?.settings) {
+          const emailSettings = settingsData.settings as any;
+          if (emailSettings.email && emailSettings.password) {
+            gmailUser = emailSettings.email;
+            gmailPass = emailSettings.password;
+            console.log('✅ Using email settings from company_settings table for reminder');
+            console.log('📧 Reminder email will be sent FROM:', gmailUser);
+          }
+        }
+
+        // If not found, try companies.settings JSONB field
+        if (!gmailUser || !gmailPass) {
+          const { data: companyData } = await supabaseAdmin
+            .from('companies')
+            .select('settings')
+            .eq('id', companyId)
+            .maybeSingle();
+
+          if (companyData?.settings) {
+            const settings = companyData.settings as any;
+            if (settings.email_settings?.email && settings.email_settings?.password) {
+              gmailUser = settings.email_settings.email;
+              gmailPass = settings.email_settings.password;
+              console.log('✅ Using email settings from companies.settings JSONB for reminder');
+              console.log('📧 Reminder email will be sent FROM:', gmailUser);
+            }
+          }
+        }
+      } catch (dbError) {
+        console.warn('⚠️ Could not load email settings from database:', dbError);
+        // Continue with environment variables as fallback
+      }
+    }
+
+    // Fallback to environment variables if database settings not found
+    if (!gmailUser || !gmailPass) {
+      smtpHost =
+        process.env.SMTP_HOST ||
+        process.env.EMAIL_HOST ||
+        (process.env.GMAIL_USER ? 'smtp.gmail.com' : undefined);
+      smtpUser =
+        process.env.SMTP_USER || process.env.EMAIL_USER || process.env.GMAIL_USER || '';
+      smtpPass =
+        process.env.SMTP_PASS ||
+        process.env.SMTP_PASSWORD ||
+        process.env.EMAIL_PASS ||
+        process.env.EMAIL_PASSWORD ||
+        process.env.GMAIL_PASS || '';
+      gmailUser = process.env.GMAIL_USER || process.env.EMAIL_USER || '';
+      gmailPass = process.env.GMAIL_PASS || process.env.EMAIL_PASS || '';
+      
+      if (gmailUser && gmailPass) {
+        console.log('✅ Using email settings from environment variables for reminder');
+      }
+    }
+
+    const smtpPort = parseInt(
+      process.env.SMTP_PORT || process.env.EMAIL_PORT || '587',
+      10
+    );
+    const smtpSecure =
+      process.env.SMTP_SECURE === 'true' ||
+      process.env.EMAIL_SECURE === 'true' ||
+      smtpPort === 465;
+
+    // Create email transporter - prioritize Gmail if we have Gmail credentials
+    let transporter;
+    if (gmailUser && gmailPass) {
+      // Use Gmail service (from database or environment)
       transporter = nodemailer.createTransport({
         service: 'gmail',
         auth: {
-          user: process.env.GMAIL_USER,
-          pass: process.env.GMAIL_PASS,
-        },
+          user: gmailUser,
+          pass: gmailPass
+        }
       });
+      console.log('📧 Using Gmail service for reminder with:', gmailUser);
+    } else if (smtpHost && smtpUser && smtpPass) {
+      // Use SMTP configuration
+      transporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: smtpPort,
+        secure: smtpSecure,
+        auth: {
+          user: smtpUser,
+          pass: smtpPass
+        }
+      });
+      console.log('📧 Using SMTP configuration for reminder');
     } else {
-      console.log('Using Ethereal Email for development');
+      // Development mode - use Ethereal
+      console.log('⚠️ Using Ethereal test email service for reminder (development mode)');
       const testAccount = await nodemailer.createTestAccount();
       
       transporter = nodemailer.createTransport({
@@ -111,34 +204,73 @@ export async function POST(request: Request) {
       </html>
     `
 
-    // Send email
+    // Send email - Use email from settings (gmailUser) as the FROM address
+    // Priority: Use email from settings first, then fallback to env vars
+    const fromEmail = gmailUser || smtpUser || process.env.SMTP_FROM || 'noreply@interview-ai.com';
+    
+    // Log which email is being used
+    if (gmailUser) {
+      console.log('📧 Sending reminder email FROM (Settings):', gmailUser);
+    } else if (smtpUser) {
+      console.log('📧 Sending reminder email FROM (SMTP Env):', smtpUser);
+    } else {
+      console.log('📧 Sending reminder email FROM (Fallback):', fromEmail);
+    }
+    
     const mailOptions = {
-      from: process.env.SMTP_FROM || process.env.GMAIL_USER || 'noreply@interview-ai.com',
+      from: `"${companyName || 'AI Interview'}" <${fromEmail}>`,
       to: email,
       subject: subject,
       html: htmlContent,
     }
 
-    const info = await transporter.sendMail(mailOptions)
-    console.log('Interview reminder email sent successfully:', info.messageId)
-
-    // Log preview URL for development
-    if (process.env.NODE_ENV === 'development') {
-      try {
-        const previewURL = nodemailer.getTestMessageUrl(info)
-        if (previewURL) {
-          console.log('Reminder Preview URL:', previewURL)
+    try {
+      const info = await transporter.sendMail(mailOptions);
+      console.log('Interview reminder email sent successfully:', info.messageId);
+      
+      // Log preview URL for development
+      if (process.env.NODE_ENV === 'development') {
+        try {
+          const previewURL = nodemailer.getTestMessageUrl(info);
+          if (previewURL) {
+            console.log('Reminder Preview URL:', previewURL);
+          }
+        } catch (previewError) {
+          console.log('Could not generate preview URL:', previewError);
         }
-      } catch (previewError) {
-        console.log('Could not generate preview URL:', previewError)
       }
+
+      return NextResponse.json({ 
+        success: true, 
+        messageId: info.messageId,
+        previewUrl: process.env.NODE_ENV === 'development' ? nodemailer.getTestMessageUrl(info) : null
+      });
+    } catch (sendError: any) {
+      console.error('❌ Reminder email sending error:', sendError);
+      const errorMessage = sendError?.message || 'Failed to send reminder email';
+      let userFriendlyError = errorMessage;
+      let hint = '';
+      
+      // Provide user-friendly error messages for common issues
+      if (errorMessage.includes('Invalid login') || errorMessage.includes('authentication failed')) {
+        userFriendlyError = 'Email authentication failed. Please check your Gmail App Password.';
+        hint = 'Make sure you are using a 16-character App Password (not your regular Gmail password).';
+      } else if (errorMessage.includes('EAUTH') || errorMessage.includes('authentication')) {
+        userFriendlyError = 'Email authentication error. Invalid credentials.';
+        hint = 'Please verify your email and App Password in Settings → Email Settings.';
+      }
+      
+      return NextResponse.json(
+        {
+          error: userFriendlyError,
+          hint: hint || 'Please check your email settings in Settings → Email Settings tab.',
+          details: sendError?.message,
+          code: sendError?.code
+        },
+        { status: 500 }
+      );
     }
 
-    return NextResponse.json({ 
-      success: true, 
-      messageId: info.messageId,
-      previewUrl: process.env.NODE_ENV === 'development' ? nodemailer.getTestMessageUrl(info) : null
-    })
 
   } catch (error) {
     console.error('Error sending interview reminder email:', error)

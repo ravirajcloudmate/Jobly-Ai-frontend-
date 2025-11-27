@@ -4,527 +4,591 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
-import { Separator } from '@/components/ui/separator';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
-  Settings, 
-  Shield, 
-  Key, 
-  Eye, 
-  EyeOff, 
-  Plus, 
-  Edit, 
-  Trash2, 
-  Download,
-  AlertTriangle,
-  CheckCircle,
-  Clock,
-  Globe,
-  Bell,
   User,
-  Lock,
-  Smartphone,
-  Monitor,
-  SmartphoneIcon,
-  Calendar,
-  RefreshCw,
-  ExternalLink,
-  Copy,
-  QrCode,
-  Activity,
-  Database,
-  Webhook,
-  FileText,
-  Users,
-  Building
+  Building,
+  Mail,
+  Save,
+  Loader2,
+  CheckCircle,
+  Settings,
+  Eye,
+  EyeOff,
+  Key
 } from 'lucide-react';
 import { PageSkeleton } from './SkeletonLoader';
+import { globalEvents } from '../hooks/useRealtimeUpdates';
 
 interface SettingsSecurityProps {
   user: any;
   globalRefreshKey?: number;
 }
 
-interface UserSettings {
-  preferences: any;
-  privacy_settings: any;
-}
-
-interface CompanySettings {
-  general_settings: any;
-  security_settings: any;
-  notification_settings: any;
-  integration_settings: any;
-}
-
-interface SecurityAuditLog {
-  id: string;
-  user_id: string;
-  event_type: string;
-  event_category: string;
-  severity: string;
-  description: string;
-  ip_address: string;
-  success: boolean;
-  created_at: string;
-}
-
-interface ApiKey {
-  id: string;
-  name: string;
-  key_prefix: string;
-  permissions: any;
-  last_used_at: string;
-  expires_at: string;
-  is_active: boolean;
-  created_at: string;
-}
-
-interface UserSession {
-  id: string;
-  ip_address: string;
-  user_agent: string;
-  device_info: any;
-  is_active: boolean;
-  last_activity: string;
-  expires_at: string;
-  created_at: string;
-}
-
-interface WebhookEndpoint {
-  id: string;
-  name: string;
-  url: string;
-  events: string[];
-  is_active: boolean;
-  last_triggered_at: string;
-  failure_count: number;
-  created_at: string;
-}
-
 export function SettingsSecurity({ user, globalRefreshKey }: SettingsSecurityProps) {
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('profile');
-  const [userSettings, setUserSettings] = useState<UserSettings | null>(null);
-  const [companySettings, setCompanySettings] = useState<CompanySettings | null>(null);
-  const [auditLogs, setAuditLogs] = useState<SecurityAuditLog[]>([]);
-  const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
-  const [userSessions, setUserSessions] = useState<UserSession[]>([]);
-  const [webhooks, setWebhooks] = useState<WebhookEndpoint[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [savingEmail, setSavingEmail] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState('account');
+  
+  // Account form data
+  const [fullName, setFullName] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [email, setEmail] = useState('');
   const [companyId, setCompanyId] = useState<string | null>(null);
-  const [showAddApiKey, setShowAddApiKey] = useState(false);
-  const [showAddWebhook, setShowAddWebhook] = useState(false);
-  const [showTwoFactorSetup, setShowTwoFactorSetup] = useState(false);
-  const [showDataExport, setShowDataExport] = useState(false);
-  const [newApiKey, setNewApiKey] = useState({ name: '', permissions: { read: true, write: false, admin: false } });
-  const [newWebhook, setNewWebhook] = useState({ name: '', url: '', events: [] as string[] });
+
+  // Email settings form data
+  const [companyEmail, setCompanyEmail] = useState('');
+  const [emailPassword, setEmailPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     if (!user?.id) return;
-    loadSettingsData();
+    loadAccountDetails();
   }, [user?.id, globalRefreshKey]);
 
-  const loadSettingsData = async () => {
+  const loadAccountDetails = async () => {
     if (!user?.id) return;
     
     setLoading(true);
+    setError(null);
+    setSuccess(null);
+    
     try {
-      // Get company ID
-      const { data: userData } = await supabase
+      // Get user data
+      const { data: userData, error: userError } = await supabase
         .from('users')
-        .select('company_id')
+        .select('id, email, full_name, company_id')
         .eq('id', user.id)
         .single();
       
+      if (userError) {
+        console.error('Error loading user data:', userError);
+        setError('Failed to load account details');
+        setLoading(false);
+        return;
+      }
+
+      if (userData) {
+        setFullName(userData.full_name || '');
+        setEmail(userData.email || '');
+        setCompanyId(userData.company_id || null);
+
+        // Try to load account details from company_settings table first
+        if (userData.company_id) {
+          try {
+            const { data: accountSettingsData, error: accountSettingsError } = await supabase
+              .from('company_settings')
+              .select('settings')
+              .eq('company_id', userData.company_id)
+              .eq('category', 'account')
+              .maybeSingle();
+
+            if (!accountSettingsError && accountSettingsData?.settings) {
+              const accountSettings = accountSettingsData.settings as any;
+              if (accountSettings.full_name) {
+                setFullName(accountSettings.full_name);
+              }
+              if (accountSettings.company_name) {
+                setCompanyName(accountSettings.company_name);
+              }
+              if (accountSettings.email) {
+                setEmail(accountSettings.email);
+              }
+              console.log('✅ Loaded account details from company_settings table');
+            }
+          } catch (accountError: any) {
+            // Table might not exist or no record found - this is okay, we'll use fallback
+            if (accountError?.code !== '42P01' && !accountError?.message?.includes('does not exist')) {
+              console.warn('⚠️ Error loading account details from company_settings:', accountError?.message || accountError);
+            }
+          }
+
+          // If account settings not found, load from companies table (fallback)
+          if (!companyName) {
+            const { data: companyData, error: companyError } = await supabase
+              .from('companies')
+              .select('id, name')
+              .eq('id', userData.company_id)
+              .single();
+            
+            if (companyError) {
+              console.error('Error loading company data:', companyError);
+              // Don't set error here, just continue without company name
+            } else if (companyData) {
+              setCompanyName(companyData.name || '');
+            }
+          }
+        } else {
+          // If no company_id, try to get from user_metadata
+          const companyNameFromMetadata = user?.user_metadata?.company_name || '';
+          if (companyNameFromMetadata) {
+            setCompanyName(companyNameFromMetadata);
+          }
+        }
+      }
+
+      // Load email settings if company exists
       if (userData?.company_id) {
-        setCompanyId(userData.company_id);
-        
-        // Load all settings data in parallel
-        await Promise.all([
-          loadUserSettings(),
-          loadCompanySettings(userData.company_id),
-          loadAuditLogs(userData.company_id),
-          loadApiKeys(userData.company_id),
-          loadUserSessions(),
-          loadWebhooks(userData.company_id)
-        ]);
+        await loadEmailSettings(userData.company_id);
       }
     } catch (error) {
-      console.error('Error loading settings data:', error);
+      console.error('Error loading account details:', error);
+      setError('Failed to load account details');
     } finally {
       setLoading(false);
     }
   };
 
-  const loadUserSettings = async () => {
+  const loadEmailSettings = async (cid: string) => {
     try {
-      const { data, error } = await supabase
-        .rpc('get_user_settings', { p_user_id: user.id });
-      
-      if (error) {
-        console.error('Error loading user settings:', {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint
-        });
-        // Set default settings as fallback
-        setUserSettings({
-          preferences: {
-            theme: 'light',
-            language: 'en',
-            timezone: 'UTC',
-            date_format: 'MM/DD/YYYY',
-            notifications: {
-              email: true,
-              push: true,
-              sms: false,
-              interview_reminders: true,
-              report_ready: true,
-              billing_updates: true,
-              security_alerts: true
-            }
-          },
-          privacy_settings: {
-            profile_visibility: 'company',
-            activity_sharing: true,
-            data_retention_days: 365,
-            analytics_tracking: true
-          }
-        });
-        return;
-      }
-      setUserSettings(data?.[0] || null);
-    } catch (error) {
-      console.error('Error loading user settings:', {
-        message: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined,
-        error: error
-      });
-      // Set default settings as fallback
-      setUserSettings({
-        preferences: {
-          theme: 'light',
-          language: 'en',
-          timezone: 'UTC',
-          date_format: 'MM/DD/YYYY',
-          notifications: {
-            email: true,
-            push: true,
-            sms: false,
-            interview_reminders: true,
-            report_ready: true,
-            billing_updates: true,
-            security_alerts: true
-          }
-        },
-        privacy_settings: {
-          profile_visibility: 'company',
-          activity_sharing: true,
-          data_retention_days: 365,
-          analytics_tracking: true
-        }
-      });
-    }
-  };
+      // Try to get from companies.settings JSONB field first (more reliable)
+      const { data: companyData, error: companyError } = await supabase
+        .from('companies')
+        .select('settings')
+        .eq('id', cid)
+        .maybeSingle();
 
-  const loadCompanySettings = async (companyId: string) => {
-    try {
-      const { data, error } = await supabase
-        .rpc('get_company_settings', { p_company_id: companyId });
-      
-      if (error) {
-        console.error('Error loading company settings:', {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint
-        });
-        // Set default company settings as fallback
-        setCompanySettings({
-          general_settings: {
-            company_name: '',
-            timezone: 'UTC',
-            date_format: 'MM/DD/YYYY',
-            currency: 'USD',
-            working_hours: {
-              start: '09:00',
-              end: '17:00',
-              timezone: 'UTC',
-              working_days: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
-            }
-          },
-          security_settings: {
-            password_policy: {
-              min_length: 8,
-              require_uppercase: true,
-              require_lowercase: true,
-              require_numbers: true,
-              require_symbols: false,
-              max_age_days: 90
-            },
-            session_settings: {
-              timeout_minutes: 480,
-              max_concurrent_sessions: 5,
-              require_reauth_for_sensitive: true
-            },
-            two_factor_auth: {
-              enabled: false,
-              required_for_admins: false,
-              backup_codes_count: 10
-            }
-          },
-          notification_settings: {
-            email_notifications: {
-              enabled: true,
-              interview_reminders: true,
-              report_ready: true,
-              billing_updates: true,
-              security_alerts: true,
-              system_updates: true
-            }
-          },
-          integration_settings: {
-            calendar_sync: {
-              enabled: false,
-              provider: 'google',
-              sync_interviews: true
-            },
-            hr_systems: {
-              enabled: false,
-              provider: '',
-              api_endpoint: '',
-              sync_candidates: false
-            },
-            analytics: {
-              google_analytics: '',
-              mixpanel: '',
-              custom_tracking: false
-            }
+      if (companyError) {
+        // Only log if it's not a "not found" error
+        if (companyError.code !== 'PGRST116') {
+          console.warn('Could not load email settings from companies table:', companyError.message || companyError);
+        }
+      } else if (companyData?.settings) {
+        const settings = companyData.settings as any;
+        if (settings.email_settings?.email) {
+          setCompanyEmail(settings.email_settings.email);
+          // Also load password if available
+          if (settings.email_settings?.password) {
+            setEmailPassword(settings.email_settings.password);
+            // If we have both email and password from companies.settings, no need to check company_settings
+            return;
           }
-        });
-        return;
+          // If email found but password not found, continue to check company_settings for password
+        }
       }
-      setCompanySettings(data?.[0] || null);
-    } catch (error) {
-      console.error('Error loading company settings:', {
-        message: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined,
-        error: error
-      });
-      // Set default company settings as fallback
-      setCompanySettings({
-        general_settings: {
-          company_name: '',
-          timezone: 'UTC',
-          date_format: 'MM/DD/YYYY',
-          currency: 'USD',
-          working_hours: {
-            start: '09:00',
-            end: '17:00',
-            timezone: 'UTC',
-            working_days: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
+
+      // Also try company_settings table (if it exists) - especially if password wasn't found above
+      try {
+        const { data: settingsData, error: settingsError } = await supabase
+          .from('company_settings')
+          .select('settings')
+          .eq('company_id', cid)
+          .eq('category', 'email')
+          .maybeSingle();
+
+        if (settingsError) {
+          // Check if table doesn't exist (common error codes)
+          if (settingsError.code === 'PGRST116' || settingsError.code === '42P01' || settingsError.message?.includes('does not exist')) {
+            // Table doesn't exist or no record found - this is okay, we'll use companies.settings
+            console.log('company_settings table not found or no email settings record - will use companies.settings');
+          } else {
+            console.warn('Error loading from company_settings table:', settingsError.message || settingsError);
           }
-        },
-        security_settings: {
-          password_policy: {
-            min_length: 8,
-            require_uppercase: true,
-            require_lowercase: true,
-            require_numbers: true,
-            require_symbols: false,
-            max_age_days: 90
-          },
-          session_settings: {
-            timeout_minutes: 480,
-            max_concurrent_sessions: 5,
-            require_reauth_for_sensitive: true
-          },
-          two_factor_auth: {
-            enabled: false,
-            required_for_admins: false,
-            backup_codes_count: 10
-          }
-        },
-        notification_settings: {
-          email_notifications: {
-            enabled: true,
-            interview_reminders: true,
-            report_ready: true,
-            billing_updates: true,
-            security_alerts: true,
-            system_updates: true
-          }
-        },
-        integration_settings: {
-          calendar_sync: {
-            enabled: false,
-            provider: 'google',
-            sync_interviews: true
-          },
-          hr_systems: {
-            enabled: false,
-            provider: '',
-            api_endpoint: '',
-            sync_candidates: false
-          },
-          analytics: {
-            google_analytics: '',
-            mixpanel: '',
-            custom_tracking: false
+        } else if (settingsData?.settings) {
+          const emailSettings = settingsData.settings as any;
+          if (emailSettings.email) {
+            setCompanyEmail(emailSettings.email);
+            // Load password if available
+            if (emailSettings.password) {
+              setEmailPassword(emailSettings.password);
+            }
           }
         }
-      });
+      } catch (tableError: any) {
+        // Table might not exist - this is okay, we'll use companies.settings as fallback
+        if (tableError?.code !== '42P01' && !tableError?.message?.includes('does not exist')) {
+          console.warn('Error accessing company_settings table:', tableError?.message || tableError);
+        }
+      }
+    } catch (error: any) {
+      // Only log actual errors, not "table doesn't exist" which is expected
+      if (error?.code !== '42P01' && error?.message && !error.message.includes('does not exist')) {
+        console.error('Error loading email settings:', error?.message || error);
+      }
+      // Don't set error state, just continue without email settings
     }
   };
 
-  const loadAuditLogs = async (companyId: string) => {
+  const handleSave = async () => {
+    if (!user?.id) return;
+
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+
     try {
-      const { data, error } = await supabase
-        .rpc('get_security_audit_logs', { 
-          p_company_id: companyId, 
-          p_limit: 20, 
-          p_offset: 0 
-        });
-      
-      if (error) {
-        console.error('Error loading audit logs:', {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint
-        });
-        // Set empty array as fallback
-        setAuditLogs([]);
+      // Validate required fields
+      if (!fullName.trim()) {
+        setError('Full name is required');
+        setSaving(false);
         return;
       }
-      setAuditLogs(data || []);
-    } catch (error) {
-      console.error('Error loading audit logs:', {
-        message: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined,
-        error: error
-      });
-      // Set empty array as fallback
-      setAuditLogs([]);
-    }
-  };
 
-  const loadApiKeys = async (companyId: string) => {
-    try {
-      const { data, error } = await supabase
-        .rpc('get_company_api_keys', { p_company_id: companyId });
-      
-      if (error) {
-        console.error('Error loading API keys:', {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint
-        });
-        // Set empty array as fallback
-        setApiKeys([]);
+      if (!companyName.trim()) {
+        setError('Company name is required');
+        setSaving(false);
         return;
       }
-      setApiKeys(data || []);
-    } catch (error) {
-      console.error('Error loading API keys:', {
-        message: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined,
-        error: error
+
+      // Update user's full_name
+      const { error: userUpdateError } = await supabase
+        .from('users')
+        .update({ 
+          full_name: fullName.trim(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', user.id);
+
+      if (userUpdateError) {
+        console.error('Error updating user:', userUpdateError);
+        throw new Error(userUpdateError.message || 'Failed to update user details');
+      }
+
+      // Update or create company
+      if (companyId) {
+        // Update existing company
+        const { error: companyUpdateError } = await supabase
+          .from('companies')
+          .update({ 
+            name: companyName.trim(),
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', companyId);
+
+        if (companyUpdateError) {
+          console.error('Error updating company:', companyUpdateError);
+          throw new Error(companyUpdateError.message || 'Failed to update company details');
+        }
+
+        // Also update company_branding table to keep it in sync
+        try {
+          // Check if company_branding record exists
+          const { data: existingBranding } = await supabase
+            .from('company_branding')
+            .select('id')
+            .eq('company_id', companyId)
+            .maybeSingle();
+
+          if (existingBranding) {
+            // Update existing company_branding record
+            const { error: brandingUpdateError } = await supabase
+              .from('company_branding')
+              .update({ 
+                company_name: companyName.trim(),
+                updated_at: new Date().toISOString()
+              })
+              .eq('company_id', companyId);
+
+            if (brandingUpdateError) {
+              console.warn('Warning: Could not update company_branding:', brandingUpdateError);
+              // Don't throw error, just log warning
+            } else {
+              console.log('✅ Updated company_branding table with new company name');
+            }
+          } else {
+            // Create company_branding record if it doesn't exist
+            const { error: brandingCreateError } = await supabase
+              .from('company_branding')
+              .insert({
+                company_id: companyId,
+                company_name: companyName.trim()
+              });
+
+            if (brandingCreateError) {
+              console.warn('Warning: Could not create company_branding:', brandingCreateError);
+              // Don't throw error, just log warning
+            } else {
+              console.log('✅ Created company_branding record with company name');
+            }
+          }
+        } catch (brandingError) {
+          console.warn('Warning: Error updating company_branding:', brandingError);
+          // Don't fail the entire operation if branding update fails
+        }
+      } else {
+        // Create new company and link to user
+        const { data: newCompany, error: companyCreateError } = await supabase
+          .from('companies')
+          .insert({ 
+            name: companyName.trim()
+          })
+          .select('id')
+          .single();
+
+        if (companyCreateError) {
+          console.error('Error creating company:', companyCreateError);
+          throw new Error(companyCreateError.message || 'Failed to create company');
+        }
+
+        if (newCompany?.id) {
+          // Link user to the new company
+          const { error: linkError } = await supabase
+            .from('users')
+            .update({ 
+              company_id: newCompany.id,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', user.id);
+
+          if (linkError) {
+            console.error('Error linking company to user:', linkError);
+            throw new Error(linkError.message || 'Failed to link company to user');
+          }
+
+          setCompanyId(newCompany.id);
+
+          // Create company_branding record for the new company
+          try {
+            const { error: brandingCreateError } = await supabase
+              .from('company_branding')
+              .insert({
+                company_id: newCompany.id,
+                company_name: companyName.trim()
+              });
+
+            if (brandingCreateError) {
+              console.warn('Warning: Could not create company_branding for new company:', brandingCreateError);
+              // Don't throw error, just log warning
+            } else {
+              console.log('✅ Created company_branding record for new company');
+            }
+          } catch (brandingError) {
+            console.warn('Warning: Error creating company_branding:', brandingError);
+            // Don't fail the entire operation if branding creation fails
+          }
+        }
+      }
+
+      // Update auth user metadata
+      const { error: metadataError } = await supabase.auth.updateUser({
+        data: {
+          full_name: fullName.trim(),
+          company_name: companyName.trim()
+        }
       });
-      // Set empty array as fallback
-      setApiKeys([]);
+
+      if (metadataError) {
+        console.error('Error updating user metadata:', metadataError);
+        // Don't throw error here, as the main updates succeeded
+      }
+
+      // Save account details to company_settings table
+      let finalCompanyId = companyId;
+      if (!finalCompanyId) {
+        const { data: userDataForCompany } = await supabase
+          .from('users')
+          .select('company_id')
+          .eq('id', user.id)
+          .single();
+        finalCompanyId = userDataForCompany?.company_id || null;
+      }
+      
+      if (finalCompanyId) {
+        try {
+          const accountSettings = {
+            full_name: fullName.trim(),
+            company_name: companyName.trim(),
+            email: email || user.email || '',
+            updated_at: new Date().toISOString()
+          };
+
+          const { error: accountSettingsError } = await supabase
+            .from('company_settings')
+            .upsert({
+              company_id: finalCompanyId,
+              category: 'account',
+              settings: accountSettings,
+              updated_at: new Date().toISOString()
+            }, {
+              onConflict: 'company_id,category'
+            });
+
+          if (accountSettingsError) {
+            // Check if table doesn't exist
+            if (accountSettingsError.code === '42P01' || accountSettingsError.message?.includes('does not exist')) {
+              console.warn('⚠️ company_settings table does not exist. Account details not saved to company_settings.');
+            } else {
+              console.warn('⚠️ Could not save account details to company_settings:', accountSettingsError.message);
+            }
+            // Don't throw error, just log warning
+          } else {
+            console.log('✅ Account details saved to company_settings table');
+          }
+        } catch (accountError: any) {
+          console.warn('⚠️ Error saving account details to company_settings:', accountError?.message || accountError);
+          // Don't fail the entire operation if company_settings save fails
+        }
+      }
+
+      setSuccess('Account details updated successfully!');
+      
+      // Trigger global refresh to update Company Profile and other components
+      globalEvents.emit('refresh');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('refresh'));
+        window.dispatchEvent(new CustomEvent('branding:updated', {
+          detail: {
+            companyName: companyName.trim(),
+            companyId: companyId
+          }
+        }));
+      }
+      
+      setTimeout(() => setSuccess(null), 5000);
+    } catch (error: any) {
+      console.error('Error saving account details:', error);
+      setError(error.message || 'Failed to save account details');
+      setTimeout(() => setError(null), 5000);
+    } finally {
+      setSaving(false);
     }
   };
 
-  const loadUserSessions = async () => {
+  const handleSaveEmailSettings = async () => {
+    if (!user?.id || !companyId) {
+      setError('Company not found. Please set up your company first.');
+      return;
+    }
+
+    setSavingEmail(true);
+    setError(null);
+    setSuccess(null);
+
     try {
-      const { data, error } = await supabase
-        .rpc('get_user_sessions', { p_user_id: user.id });
-      
-      if (error) {
-        console.error('Error loading user sessions:', {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint
-        });
-        // Set empty array as fallback
-        setUserSessions([]);
+      // Validate email format
+      if (companyEmail && !companyEmail.includes('@')) {
+        setError('Please enter a valid email address');
+        setSavingEmail(false);
         return;
       }
-      setUserSessions(data || []);
-    } catch (error) {
-      console.error('Error loading user sessions:', {
-        message: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined,
-        error: error
-      });
-      // Set empty array as fallback
-      setUserSessions([]);
-    }
-  };
 
-  const loadWebhooks = async (companyId: string) => {
-    try {
-      const { data, error } = await supabase
-        .rpc('get_company_webhooks', { p_company_id: companyId });
-      
-      if (error) {
-        console.error('Error loading webhooks:', {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint
-        });
-        // Set empty array as fallback
-        setWebhooks([]);
+      // Validate password if email is provided
+      if (companyEmail && !emailPassword) {
+        setError('Please enter Google App Password when email is provided');
+        setSavingEmail(false);
         return;
       }
-      setWebhooks(data || []);
-    } catch (error) {
-      console.error('Error loading webhooks:', {
-        message: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined,
-        error: error
-      });
-      // Set empty array as fallback
-      setWebhooks([]);
+
+      // Remove spaces from password (Google App Passwords often have spaces for readability)
+      const passwordWithoutSpaces = emailPassword ? emailPassword.replace(/\s+/g, '') : '';
+
+      // Validate password length (Google App Password is 16 characters without spaces)
+      if (passwordWithoutSpaces && passwordWithoutSpaces.length !== 16) {
+        setError(`Google App Password must be exactly 16 characters (without spaces). Current length: ${passwordWithoutSpaces.length}`);
+        setSavingEmail(false);
+        return;
+      }
+
+      // Prepare email settings object - save password without spaces
+      const emailSettings = {
+        email: companyEmail.trim(),
+        password: passwordWithoutSpaces, // Save without spaces (Google App Passwords work without spaces)
+        provider: 'gmail',
+        updated_at: new Date().toISOString()
+      };
+
+      let savedToCompanySettings = false;
+      let savedToCompaniesTable = false;
+
+      // First, try to save to company_settings table (primary location)
+      try {
+        const { error: settingsError } = await supabase
+          .from('company_settings')
+          .upsert({
+            company_id: companyId,
+            category: 'email',
+            settings: emailSettings,
+            updated_at: new Date().toISOString()
+          }, {
+            onConflict: 'company_id,category'
+          });
+
+        if (settingsError) {
+          // Check if table doesn't exist
+          if (settingsError.code === '42P01' || settingsError.message?.includes('does not exist')) {
+            console.warn('⚠️ company_settings table does not exist. Please run migration 011_create_company_settings_table.sql');
+            console.warn('⚠️ Falling back to companies.settings JSONB field');
+          } else {
+            console.error('❌ Error saving to company_settings table:', settingsError);
+            throw new Error(settingsError.message || 'Failed to save email settings to company_settings table');
+          }
+        } else {
+          savedToCompanySettings = true;
+          console.log('✅ Email settings saved to company_settings table');
+        }
+      } catch (settingsTableError: any) {
+        console.error('❌ Error saving to company_settings table:', settingsTableError);
+        // Continue to fallback
+      }
+
+      // Also save to companies.settings JSONB field as backup/fallback
+      try {
+        const { data: currentCompany, error: fetchError } = await supabase
+          .from('companies')
+          .select('settings')
+          .eq('id', companyId)
+          .single();
+
+        if (fetchError) {
+          console.warn('⚠️ Could not fetch company settings:', fetchError.message);
+        } else {
+          const currentSettings = (currentCompany?.settings as any) || {};
+          const updatedSettings = {
+            ...currentSettings,
+            email_settings: {
+              email: companyEmail.trim(),
+              password: passwordWithoutSpaces, // Use password without spaces
+              provider: 'gmail'
+            }
+          };
+
+          const { error: companyUpdateError } = await supabase
+            .from('companies')
+            .update({
+              settings: updatedSettings,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', companyId);
+
+          if (companyUpdateError) {
+            console.warn('⚠️ Could not save to companies.settings:', companyUpdateError.message);
+          } else {
+            savedToCompaniesTable = true;
+            console.log('✅ Email settings also saved to companies.settings JSONB field');
+          }
+        }
+      } catch (companiesError: any) {
+        console.warn('⚠️ Error saving to companies.settings:', companiesError.message || companiesError);
+      }
+
+      // Ensure at least one save was successful
+      if (!savedToCompanySettings && !savedToCompaniesTable) {
+        throw new Error('Failed to save email settings to both locations. Please check database connection and table existence.');
+      }
+
+      if (savedToCompanySettings && savedToCompaniesTable) {
+        console.log('✅ Email settings saved to both company_settings table and companies.settings JSONB field');
+      } else if (savedToCompanySettings) {
+        console.log('✅ Email settings saved to company_settings table');
+      } else if (savedToCompaniesTable) {
+        console.log('✅ Email settings saved to companies.settings JSONB field (company_settings table not available)');
+      }
+
+      setSuccess('Email settings saved successfully!');
+      setTimeout(() => setSuccess(null), 5000);
+    } catch (error: any) {
+      console.error('Error saving email settings:', error);
+      setError(error.message || 'Failed to save email settings');
+      setTimeout(() => setError(null), 5000);
+    } finally {
+      setSavingEmail(false);
     }
-  };
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
-
-  const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case 'critical': return 'bg-red-100 text-red-800';
-      case 'error': return 'bg-orange-100 text-orange-800';
-      case 'warning': return 'bg-yellow-100 text-yellow-800';
-      case 'info': return 'bg-blue-100 text-blue-800';
-      default: return 'bg-gray-100 text-gray-800';
-    }
-  };
-
-  const getDeviceIcon = (userAgent: string) => {
-    if (userAgent.includes('Mobile')) return <Smartphone className="h-4 w-4" />;
-    if (userAgent.includes('Tablet')) return <SmartphoneIcon className="h-4 w-4" />;
-    return <Monitor className="h-4 w-4" />;
   };
 
   if (loading) {
@@ -532,745 +596,253 @@ export function SettingsSecurity({ user, globalRefreshKey }: SettingsSecurityPro
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="p-6 max-w-4xl mx-auto">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold mb-2">Settings & Security</h1>
-        <p className="text-muted-foreground">Manage your account settings, security preferences, and integrations</p>
+        <h1 className="text-3xl font-bold mb-2">Settings</h1>
+        <p className="text-muted-foreground">Manage your account details and email configuration</p>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="profile">Profile</TabsTrigger>
-          <TabsTrigger value="security">Security</TabsTrigger>
-          <TabsTrigger value="notifications">Notifications</TabsTrigger>
-          <TabsTrigger value="integrations">Integrations</TabsTrigger>
-          <TabsTrigger value="audit">Audit Logs</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="account">Account Details</TabsTrigger>
+          <TabsTrigger value="email">Email Settings</TabsTrigger>
         </TabsList>
 
-        {/* Profile Tab */}
-        <TabsContent value="profile" className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Personal Settings */}
-            <Card>
+        {/* Account Details Tab */}
+        <TabsContent value="account" className="space-y-6">
+          <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <User className="h-5 w-5" />
-                  Personal Settings
+            Account Details
                 </CardTitle>
-                <CardDescription>Manage your personal preferences</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <Label htmlFor="theme">Theme</Label>
-                    <Select defaultValue={userSettings?.preferences?.theme || 'light'}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="light">Light</SelectItem>
-                        <SelectItem value="dark">Dark</SelectItem>
-                        <SelectItem value="system">System</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div>
-                    <Label htmlFor="language">Language</Label>
-                    <Select defaultValue={userSettings?.preferences?.language || 'en'}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="en">English</SelectItem>
-                        <SelectItem value="es">Spanish</SelectItem>
-                        <SelectItem value="fr">French</SelectItem>
-                        <SelectItem value="de">German</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div>
-                  <Label htmlFor="timezone">Timezone</Label>
-                  <Select defaultValue={userSettings?.preferences?.timezone || 'UTC'}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="UTC">UTC</SelectItem>
-                      <SelectItem value="America/New_York">Eastern Time</SelectItem>
-                      <SelectItem value="America/Chicago">Central Time</SelectItem>
-                      <SelectItem value="America/Denver">Mountain Time</SelectItem>
-                      <SelectItem value="America/Los_Angeles">Pacific Time</SelectItem>
-                      <SelectItem value="Europe/London">London</SelectItem>
-                      <SelectItem value="Asia/Kolkata">India Standard Time</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="dateFormat">Date Format</Label>
-                  <Select defaultValue={userSettings?.preferences?.date_format || 'MM/DD/YYYY'}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="MM/DD/YYYY">MM/DD/YYYY</SelectItem>
-                      <SelectItem value="DD/MM/YYYY">DD/MM/YYYY</SelectItem>
-                      <SelectItem value="YYYY-MM-DD">YYYY-MM-DD</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button>Save Preferences</Button>
-              </CardContent>
-            </Card>
-
-            {/* Privacy Settings */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Shield className="h-5 w-5" />
-                  Privacy Settings
-                </CardTitle>
-                <CardDescription>Control your privacy and data sharing</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="profileVisibility">Profile Visibility</Label>
-                    <p className="text-sm text-muted-foreground">Who can see your profile</p>
-                  </div>
-                  <Select defaultValue={userSettings?.privacy_settings?.profile_visibility || 'company'}>
-                    <SelectTrigger className="w-32">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="public">Public</SelectItem>
-                      <SelectItem value="company">Company Only</SelectItem>
-                      <SelectItem value="private">Private</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="activitySharing">Activity Sharing</Label>
-                    <p className="text-sm text-muted-foreground">Share your activity with team</p>
-                  </div>
-                  <Switch 
-                    defaultChecked={userSettings?.privacy_settings?.activity_sharing || true}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="analyticsTracking">Analytics Tracking</Label>
-                    <p className="text-sm text-muted-foreground">Help improve the product</p>
-                  </div>
-                  <Switch 
-                    defaultChecked={userSettings?.privacy_settings?.analytics_tracking || true}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="dataRetention">Data Retention</Label>
-                  <Select defaultValue={userSettings?.privacy_settings?.data_retention_days?.toString() || '365'}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="30">30 days</SelectItem>
-                      <SelectItem value="90">90 days</SelectItem>
-                      <SelectItem value="180">180 days</SelectItem>
-                      <SelectItem value="365">1 year</SelectItem>
-                      <SelectItem value="730">2 years</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button>Save Privacy Settings</Button>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-
-        {/* Security Tab */}
-        <TabsContent value="security" className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Password & Authentication */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Lock className="h-5 w-5" />
-                  Password & Authentication
-                </CardTitle>
-                <CardDescription>Manage your password and authentication settings</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="currentPassword">Current Password</Label>
-                  <Input id="currentPassword" type="password" placeholder="Enter current password" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="newPassword">New Password</Label>
-                  <Input id="newPassword" type="password" placeholder="Enter new password" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="confirmPassword">Confirm Password</Label>
-                  <Input id="confirmPassword" type="password" placeholder="Confirm new password" />
-                </div>
-                <Button>Update Password</Button>
-                
-                <Separator />
-                
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label htmlFor="twoFactor">Two-Factor Authentication</Label>
-                    <p className="text-sm text-muted-foreground">Add an extra layer of security</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary">Disabled</Badge>
-                    <Button variant="outline" size="sm" onClick={() => setShowTwoFactorSetup(true)}>
-                      Enable
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Active Sessions */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Activity className="h-5 w-5" />
-                  Active Sessions
-                </CardTitle>
-                <CardDescription>Manage your active login sessions</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  {userSessions.length === 0 ? (
-                    <div className="text-center py-4">
-                      <Activity className="h-8 w-8 text-muted-foreground mx-auto mb-2 opacity-50" />
-                      <div className="text-sm text-muted-foreground">No active sessions</div>
-                    </div>
-                  ) : (
-                    userSessions.map((session) => (
-                      <div key={session.id} className="flex items-center justify-between p-3 border rounded-lg">
-                        <div className="flex items-center gap-3">
-                          {getDeviceIcon(session.user_agent)}
-                          <div>
-                            <div className="font-medium text-sm">
-                              {session.device_info?.device || 'Unknown Device'}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {session.ip_address} • Last active {formatDate(session.last_activity)}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {session.is_active && (
-                            <Badge variant="secondary" className="text-xs">Current</Badge>
-                          )}
-                          <Button variant="outline" size="sm">
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* API Keys */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Key className="h-5 w-5" />
-                API Keys
-              </CardTitle>
-              <CardDescription>Manage your API keys for programmatic access</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {apiKeys.length === 0 ? (
-                  <div className="text-center py-8">
-                    <Key className="h-12 w-12 text-muted-foreground mx-auto mb-3 opacity-50" />
-                    <div className="text-muted-foreground font-medium">No API keys</div>
-                    <div className="text-sm text-muted-foreground mt-1">Create an API key to access our API</div>
-                    <Button className="mt-4" onClick={() => setShowAddApiKey(true)}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Create API Key
-                    </Button>
-                  </div>
-                ) : (
-                  <>
-                    {apiKeys.map((key) => (
-                      <div key={key.id} className="flex items-center justify-between p-4 border rounded-lg">
-                        <div className="flex items-center gap-3">
-                          <div className="p-2 bg-gray-100 rounded-lg">
-                            <Key className="h-4 w-4 text-gray-600" />
-                          </div>
-                          <div>
-                            <div className="font-medium">{key.name}</div>
-                            <div className="text-sm text-muted-foreground">
-                              {key.key_prefix}•••••••• • Created {formatDate(key.created_at)}
-                            </div>
-                            <div className="flex items-center gap-2 mt-1">
-                              {key.permissions.read && <Badge variant="secondary" className="text-xs">Read</Badge>}
-                              {key.permissions.write && <Badge variant="secondary" className="text-xs">Write</Badge>}
-                              {key.permissions.admin && <Badge variant="secondary" className="text-xs">Admin</Badge>}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {key.last_used_at && (
-                            <div className="text-xs text-muted-foreground">
-                              Last used {formatDate(key.last_used_at)}
-                            </div>
-                          )}
-                          <Button variant="outline" size="sm">
-                            <Copy className="h-3 w-3" />
-                          </Button>
-                          <Button variant="outline" size="sm">
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                    <Button onClick={() => setShowAddApiKey(true)}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Create API Key
-                    </Button>
-                  </>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Notifications Tab */}
-        <TabsContent value="notifications" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Bell className="h-5 w-5" />
-                Notification Preferences
-              </CardTitle>
-              <CardDescription>Choose how you want to be notified about activities</CardDescription>
+          <CardDescription>
+            Update your personal and company information
+          </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="space-y-4">
-                <h3 className="font-medium">Email Notifications</h3>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label>Interview Reminders</Label>
-                      <p className="text-sm text-muted-foreground">Get notified before interviews</p>
-                    </div>
-                    <Switch defaultChecked={userSettings?.preferences?.notifications?.interview_reminders || true} />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label>Report Ready</Label>
-                      <p className="text-sm text-muted-foreground">When interview reports are completed</p>
-                    </div>
-                    <Switch defaultChecked={userSettings?.preferences?.notifications?.report_ready || true} />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label>Billing Updates</Label>
-                      <p className="text-sm text-muted-foreground">Payment and subscription updates</p>
-                    </div>
-                    <Switch defaultChecked={userSettings?.preferences?.notifications?.billing_updates || true} />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label>Security Alerts</Label>
-                      <p className="text-sm text-muted-foreground">Important security notifications</p>
-                    </div>
-                    <Switch defaultChecked={userSettings?.preferences?.notifications?.security_alerts || true} />
-                  </div>
-                </div>
-              </div>
-              
-              <Separator />
-              
-              <div className="space-y-4">
-                <h3 className="font-medium">Push Notifications</h3>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label>Enable Push Notifications</Label>
-                    <p className="text-sm text-muted-foreground">Receive notifications in your browser</p>
-                  </div>
-                  <Switch defaultChecked={userSettings?.preferences?.notifications?.push || false} />
-                </div>
-              </div>
-              
-              <Button>Save Notification Settings</Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
+          {error && (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+          
+          {success && (
+            <Alert className="border-green-500 bg-green-50">
+              <CheckCircle className="h-4 w-4 text-green-600" />
+              <AlertDescription className="text-green-800">{success}</AlertDescription>
+            </Alert>
+          )}
 
-        {/* Integrations Tab */}
-        <TabsContent value="integrations" className="space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* Webhooks */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Webhook className="h-5 w-5" />
-                  Webhooks
-                </CardTitle>
-                <CardDescription>Configure webhook endpoints for real-time updates</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {webhooks.length === 0 ? (
-                    <div className="text-center py-8">
-                      <Webhook className="h-12 w-12 text-muted-foreground mx-auto mb-3 opacity-50" />
-                      <div className="text-muted-foreground font-medium">No webhooks configured</div>
-                      <div className="text-sm text-muted-foreground mt-1">Set up webhooks to receive real-time updates</div>
-                      <Button className="mt-4" onClick={() => setShowAddWebhook(true)}>
-                        <Plus className="h-4 w-4 mr-2" />
-                        Add Webhook
-                      </Button>
-                    </div>
-                  ) : (
-                    <>
-                      {webhooks.map((webhook) => (
-                        <div key={webhook.id} className="flex items-center justify-between p-4 border rounded-lg">
-                          <div>
-                            <div className="font-medium">{webhook.name}</div>
-                            <div className="text-sm text-muted-foreground">{webhook.url}</div>
-                            <div className="flex items-center gap-2 mt-1">
-                              {webhook.events.map((event) => (
-                                <Badge key={event} variant="secondary" className="text-xs">
-                                  {event}
-                                </Badge>
-                              ))}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Badge variant={webhook.is_active ? "default" : "secondary"}>
-                              {webhook.is_active ? "Active" : "Inactive"}
-                            </Badge>
-                            <Button variant="outline" size="sm">
-                              <Edit className="h-3 w-3" />
-                            </Button>
-                            <Button variant="outline" size="sm">
-                              <Trash2 className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                      <Button onClick={() => setShowAddWebhook(true)}>
-                        <Plus className="h-4 w-4 mr-2" />
-                        Add Webhook
-                      </Button>
-                    </>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+          <div className="space-y-4">
+            {/* Full Name */}
+            <div className="space-y-2">
+              <Label htmlFor="fullName" className="flex items-center gap-2">
+                <User className="h-4 w-4" />
+                Full Name
+              </Label>
+              <Input 
+                id="fullName"
+                type="text"
+                placeholder="Enter your full name"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                disabled={saving}
+                className="h-11"
+              />
+            </div>
 
-            {/* Data Export */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Download className="h-5 w-5" />
-                  Data Export
-                </CardTitle>
-                <CardDescription>Export your data for backup or migration</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-3">
-                  <div className="p-4 border rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <Database className="h-5 w-5 text-blue-600" />
-                      <div>
-                        <div className="font-medium">Full Data Export</div>
-                        <div className="text-sm text-muted-foreground">All your data in JSON format</div>
-                      </div>
-                    </div>
-                    <Button className="mt-3" variant="outline" onClick={() => setShowDataExport(true)}>
-                      <Download className="h-4 w-4 mr-2" />
-                      Request Export
-                    </Button>
-                  </div>
-                  
-                  <div className="p-4 border rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <FileText className="h-5 w-5 text-green-600" />
-                      <div>
-                        <div className="font-medium">Interview Reports</div>
-                        <div className="text-sm text-muted-foreground">Export all interview reports</div>
-                      </div>
-                    </div>
-                    <Button className="mt-3" variant="outline">
-                      <Download className="h-4 w-4 mr-2" />
-                      Export Reports
-                    </Button>
-                  </div>
-                  
-                  <div className="p-4 border rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <Users className="h-5 w-5 text-purple-600" />
-                      <div>
-                        <div className="font-medium">Candidate Data</div>
-                        <div className="text-sm text-muted-foreground">Export candidate information</div>
-                      </div>
-                    </div>
-                    <Button className="mt-3" variant="outline">
-                      <Download className="h-4 w-4 mr-2" />
-                      Export Candidates
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+            {/* Company Name */}
+            <div className="space-y-2">
+              <Label htmlFor="companyName" className="flex items-center gap-2">
+                <Building className="h-4 w-4" />
+                Company Name
+              </Label>
+              <Input 
+                id="companyName"
+                type="text"
+                placeholder="Enter your company name"
+                value={companyName}
+                onChange={(e) => setCompanyName(e.target.value)}
+                disabled={saving}
+                className="h-11"
+              />
+            </div>
+
+            {/* Email (Read-only) */}
+            <div className="space-y-2">
+              <Label htmlFor="email" className="flex items-center gap-2">
+                <Mail className="h-4 w-4" />
+                Email Address
+              </Label>
+              <Input 
+                id="email"
+                type="email"
+                value={email}
+                disabled
+                className="h-11 bg-gray-50 cursor-not-allowed"
+              />
+              <p className="text-sm text-muted-foreground">
+                Email address cannot be changed
+              </p>
+            </div>
+
+            {/* Save Button */}
+            <div className="pt-4">
+              <Button 
+                onClick={handleSave}
+                disabled={saving}
+                className="w-full h-11 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+              >
+                {saving ? (
+              <div className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Saving...
+              </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <Save className="w-4 h-4" />
+                    Save Changes
+            </div>
+                )}
+              </Button>
+            </div>
           </div>
+        </CardContent>
+      </Card>
         </TabsContent>
 
-        {/* Audit Logs Tab */}
-        <TabsContent value="audit" className="space-y-6">
+        {/* Email Settings Tab */}
+        <TabsContent value="email" className="space-y-6">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Shield className="h-5 w-5" />
-                Security Audit Logs
+                <Mail className="h-5 w-5" />
+                Email Configuration
               </CardTitle>
-              <CardDescription>Monitor security events and account activity</CardDescription>
+              <CardDescription>
+                Configure Gmail settings for sending interview invitations to candidates
+              </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-6">
+              {error && (
+                <Alert variant="destructive">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+              
+              {success && (
+                <Alert className="border-green-500 bg-green-50">
+                  <CheckCircle className="h-4 w-4 text-green-600" />
+                  <AlertDescription className="text-green-800">{success}</AlertDescription>
+                </Alert>
+              )}
+
+              {!companyId && (
+                <Alert>
+                  <AlertDescription>
+                    Please set up your company in Account Details tab first.
+                  </AlertDescription>
+                </Alert>
+              )}
+
               <div className="space-y-4">
-                {auditLogs.length === 0 ? (
-                  <div className="text-center py-8">
-                    <Shield className="h-12 w-12 text-muted-foreground mx-auto mb-3 opacity-50" />
-                    <div className="text-muted-foreground font-medium">No audit logs</div>
-                    <div className="text-sm text-muted-foreground mt-1">Security events will appear here</div>
+                {/* Company Email */}
+                <div className="space-y-2">
+                  <Label htmlFor="companyEmail" className="flex items-center gap-2">
+                    <Mail className="h-4 w-4" />
+                    Company Email (Gmail)
+                  </Label>
+                  <Input 
+                    id="companyEmail"
+                    type="email"
+                    placeholder="your-company@gmail.com"
+                    value={companyEmail}
+                    onChange={(e) => setCompanyEmail(e.target.value)}
+                    disabled={savingEmail || !companyId}
+                    className="h-11"
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    This email will be used to send interview invitations to candidates
+                  </p>
+                </div>
+
+                {/* Google App Password */}
+                <div className="space-y-2">
+                  <Label htmlFor="emailPassword" className="flex items-center gap-2">
+                    <Key className="h-4 w-4" />
+                    Google App Password (16 characters)
+                  </Label>
+                  <div className="relative">
+                    <Input 
+                      id="emailPassword"
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder="Enter 16-character Google App Password (spaces will be removed automatically)"
+                      value={emailPassword}
+                      onChange={(e) => setEmailPassword(e.target.value)}
+                      disabled={savingEmail || !companyId}
+                      className="h-11 pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      disabled={savingEmail || !companyId}
+                    >
+                      {showPassword ? (
+                        <EyeOff className="h-4 w-4" />
+                      ) : (
+                        <Eye className="h-4 w-4" />
+                      )}
+                    </button>
                   </div>
-                ) : (
-                  auditLogs.map((log) => (
-                    <div key={log.id} className="flex items-start gap-3 p-4 border rounded-lg">
-                      <div className="flex-shrink-0">
-                        {log.success ? (
-                          <CheckCircle className="h-5 w-5 text-green-600" />
-                        ) : (
-                          <AlertTriangle className="h-5 w-5 text-red-600" />
-                        )}
+                  <p className="text-sm text-muted-foreground">
+                    Get your App Password from: Google Account → Security → 2-Step Verification → App passwords.
+                    <br />
+                    <span className="text-blue-600 font-medium">Note: You can paste the password with spaces (e.g., "eecy luvf llvk ixby") - spaces will be automatically removed.</span>
+                  </p>
+                </div>
+
+                {/* Info Box */}
+                <Alert>
+                  <AlertDescription className="text-sm">
+                    <strong>How to get Google App Password:</strong>
+                    <ol className="list-decimal list-inside mt-2 space-y-1">
+                      <li>Go to your Google Account settings</li>
+                      <li>Navigate to Security → 2-Step Verification</li>
+                      <li>Scroll down to "App passwords"</li>
+                      <li>Generate a new app password for "Mail"</li>
+                      <li>Copy the 16-character password and paste it here</li>
+                    </ol>
+                  </AlertDescription>
+                </Alert>
+
+                {/* Save Button */}
+                <div className="pt-4">
+                  <Button 
+                    onClick={handleSaveEmailSettings}
+                    disabled={savingEmail || !companyId}
+                    className="w-full h-11 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700"
+                  >
+                    {savingEmail ? (
+                      <div className="flex items-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Saving...
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <div className="font-medium text-sm">
-                            {log.event_type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Badge className={`text-xs ${getSeverityColor(log.severity)}`}>
-                              {log.severity}
-                            </Badge>
-                            <span className="text-xs text-muted-foreground">
-                              {formatDate(log.created_at)}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="text-sm text-muted-foreground mt-1">
-                          {log.description}
-                        </div>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          {log.ip_address} • {log.event_category}
-                        </div>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <Save className="w-4 h-4" />
+                        Save Email Settings
                       </div>
-                    </div>
-                  ))
-                )}
+                    )}
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
-
-      {/* Add API Key Dialog */}
-      <Dialog open={showAddApiKey} onOpenChange={setShowAddApiKey}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Create API Key</DialogTitle>
-            <DialogDescription>
-              Create a new API key for programmatic access
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="keyName">Key Name</Label>
-              <Input 
-                id="keyName" 
-                placeholder="My API Key"
-                value={newApiKey.name}
-                onChange={(e) => setNewApiKey({...newApiKey, name: e.target.value})}
-              />
-            </div>
-            <div>
-              <Label>Permissions</Label>
-              <div className="space-y-2 mt-2">
-                <div className="flex items-center space-x-2">
-                  <Switch 
-                    checked={newApiKey.permissions.read}
-                    onCheckedChange={(checked) => setNewApiKey({
-                      ...newApiKey, 
-                      permissions: {...newApiKey.permissions, read: checked}
-                    })}
-                  />
-                  <Label>Read Access</Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <Switch 
-                    checked={newApiKey.permissions.write}
-                    onCheckedChange={(checked) => setNewApiKey({
-                      ...newApiKey, 
-                      permissions: {...newApiKey.permissions, write: checked}
-                    })}
-                  />
-                  <Label>Write Access</Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <Switch 
-                    checked={newApiKey.permissions.admin}
-                    onCheckedChange={(checked) => setNewApiKey({
-                      ...newApiKey, 
-                      permissions: {...newApiKey.permissions, admin: checked}
-                    })}
-                  />
-                  <Label>Admin Access</Label>
-                </div>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => setShowAddApiKey(false)}>
-                Cancel
-              </Button>
-              <Button className="flex-1">
-                Create Key
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add Webhook Dialog */}
-      <Dialog open={showAddWebhook} onOpenChange={setShowAddWebhook}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Add Webhook</DialogTitle>
-            <DialogDescription>
-              Configure a webhook endpoint to receive real-time updates
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="webhookName">Webhook Name</Label>
-              <Input 
-                id="webhookName" 
-                placeholder="My Webhook"
-                value={newWebhook.name}
-                onChange={(e) => setNewWebhook({...newWebhook, name: e.target.value})}
-              />
-            </div>
-            <div>
-              <Label htmlFor="webhookUrl">Webhook URL</Label>
-              <Input 
-                id="webhookUrl" 
-                placeholder="https://example.com/webhook"
-                value={newWebhook.url}
-                onChange={(e) => setNewWebhook({...newWebhook, url: e.target.value})}
-              />
-            </div>
-            <div>
-              <Label>Events</Label>
-              <div className="space-y-2 mt-2">
-                {['interview_completed', 'report_generated', 'candidate_added', 'job_created'].map((event) => (
-                  <div key={event} className="flex items-center space-x-2">
-                    <Switch 
-                      checked={newWebhook.events.includes(event)}
-                      onCheckedChange={(checked) => {
-                        if (checked) {
-                          setNewWebhook({...newWebhook, events: [...newWebhook.events, event]});
-                        } else {
-                          setNewWebhook({...newWebhook, events: newWebhook.events.filter(e => e !== event)});
-                        }
-                      }}
-                    />
-                    <Label className="text-sm">{event.replace(/_/g, ' ')}</Label>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => setShowAddWebhook(false)}>
-                Cancel
-              </Button>
-              <Button className="flex-1">
-                Add Webhook
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Two-Factor Setup Dialog */}
-      <Dialog open={showTwoFactorSetup} onOpenChange={setShowTwoFactorSetup}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Enable Two-Factor Authentication</DialogTitle>
-            <DialogDescription>
-              Add an extra layer of security to your account
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="text-center">
-              <QrCode className="h-24 w-24 text-muted-foreground mx-auto mb-4 opacity-50" />
-              <p className="text-sm text-muted-foreground">
-                Two-factor authentication setup will be implemented with TOTP
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => setShowTwoFactorSetup(false)}>
-                Cancel
-              </Button>
-              <Button className="flex-1" disabled>
-                Enable 2FA
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Data Export Dialog */}
-      <Dialog open={showDataExport} onOpenChange={setShowDataExport}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Request Data Export</DialogTitle>
-            <DialogDescription>
-              Request a complete export of your data
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="p-4 bg-blue-50 rounded-lg">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="h-4 w-4 text-blue-600" />
-                <span className="text-sm font-medium text-blue-800">Important</span>
-              </div>
-              <p className="text-sm text-blue-700 mt-1">
-                Data exports may take up to 24 hours to process. You'll receive an email when ready.
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => setShowDataExport(false)}>
-                Cancel
-              </Button>
-              <Button className="flex-1">
-                Request Export
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

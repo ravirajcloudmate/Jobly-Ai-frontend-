@@ -14,6 +14,7 @@ interface AuthContextType {
   signOut: () => Promise<{ error: AuthError | null }>
   resetPassword: (email: string) => Promise<{ error: AuthError | null }>
   updateProfile: (updates: any) => Promise<{ error: AuthError | null }>
+  resendEmailVerification: (email: string) => Promise<{ data: any; error: AuthError | null }>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -283,12 +284,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       setLoading(true)
       
-      // Skip configuration check since user confirmed it's working
-      console.log('✅ Attempting sign up with Supabase (bypassing config check)...')
-      
-      // Optional: Still log the config status for debugging
-      const configStatus = isSupabaseConfigured()
-      console.log('🔍 Config status (for debugging):', configStatus)
+      console.log('✅ Attempting sign up with Supabase...')
+      console.log('🔍 Email:', email)
+      console.log('🔍 User data:', userData)
       
       const { data, error } = await supabase.auth.signUp({
         email,
@@ -302,11 +300,85 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       })
 
-      // Note: Company and user profile creation will be handled by the database trigger
-      // or manually after email verification
+      console.log('📧 Sign up response:', {
+        user: data?.user ? {
+          id: data.user.id,
+          email: data.user.email,
+          email_confirmed_at: data.user.email_confirmed_at,
+          confirmed_at: data.user.confirmed_at
+        } : null,
+        session: data?.session ? 'Session created' : 'No session',
+        error: error ? {
+          message: error.message,
+          status: error.status,
+          name: error.name
+        } : null
+      })
+
+      // Check if email confirmation is required
+      if (data?.user && !data.user.email_confirmed_at) {
+        console.log('⚠️ Email confirmation required but email may not have been sent')
+        console.log('💡 Check Supabase dashboard: Authentication > Email Templates > Confirm signup')
+        console.log('💡 Check Supabase dashboard: Authentication > Settings > Email Auth > Enable email confirmations')
+        
+        // Send custom verification email
+        try {
+          console.log('📧 Sending custom verification email...')
+          const emailResponse = await fetch('/api/send-verification-email', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              email: email,
+              fullName: userData?.fullName || '',
+              companyName: userData?.companyName || '',
+              userId: data.user.id
+            })
+          })
+
+          const emailResult = await emailResponse.json()
+          if (emailResult.success) {
+            console.log('✅ Custom verification email sent successfully')
+            if (emailResult.previewUrl) {
+              console.log('📧 Preview URL:', emailResult.previewUrl)
+            }
+          } else {
+            console.error('❌ Failed to send custom verification email:', emailResult.error)
+          }
+        } catch (emailError) {
+          console.error('❌ Error sending custom verification email:', emailError)
+          // Don't fail the signup if email fails
+        }
+      }
 
       return { data, error }
     } catch (error) {
+      console.error('❌ Sign up error:', error)
+      return { data: null, error: error as AuthError }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const resendEmailVerification = async (email: string) => {
+    try {
+      setLoading(true)
+      console.log('📧 Resending email verification to:', email)
+      
+      const { data, error } = await supabase.auth.resend({
+        type: 'signup',
+        email: email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`
+        }
+      })
+
+      console.log('📧 Resend response:', { data, error })
+
+      return { data, error }
+    } catch (error) {
+      console.error('❌ Resend email error:', error)
       return { data: null, error: error as AuthError }
     } finally {
       setLoading(false)
@@ -425,7 +497,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     signIn,
     signOut,
     resetPassword,
-    updateProfile
+    updateProfile,
+    resendEmailVerification
   }
 
   return (

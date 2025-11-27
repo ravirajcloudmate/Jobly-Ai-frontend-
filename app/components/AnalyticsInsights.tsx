@@ -5,9 +5,10 @@ import { supabase } from '@/lib/supabase';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Calendar, TrendingUp, Users, Briefcase, FileText, RefreshCcw } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Calendar, TrendingUp, Users, Briefcase, FileText, RefreshCcw, Download, Eye, ChevronRight } from 'lucide-react';
 import { PageSkeleton } from './SkeletonLoader';
 
 interface AnalyticsInsightsProps {
@@ -25,6 +26,9 @@ export function AnalyticsInsights({ user, globalRefreshKey }: AnalyticsInsightsP
   const [events, setEvents] = useState<any[]>([]);
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState<number>(0);
+  const [interviewReports, setInterviewReports] = useState<any[]>([]);
+  const [selectedReport, setSelectedReport] = useState<any | null>(null);
+  const [isReportDialogOpen, setIsReportDialogOpen] = useState(false);
 
   const rangeDays = useMemo(() => (dateRange === '7d' ? 7 : dateRange === '30d' ? 30 : 90), [dateRange]);
 
@@ -41,7 +45,6 @@ export function AnalyticsInsights({ user, globalRefreshKey }: AnalyticsInsightsP
     loadAnalytics();
   }, [companyId, dateRange, reloadKey]);
 
-  // Respond to global refresh key changes
   useEffect(() => {
     if (globalRefreshKey && globalRefreshKey > 0) {
       console.log('AnalyticsInsights: Global refresh triggered');
@@ -52,16 +55,19 @@ export function AnalyticsInsights({ user, globalRefreshKey }: AnalyticsInsightsP
   const loadAnalytics = async () => {
     setLoading(true);
     try {
-      // Use the new analytics function for better performance
+      // Try RPC function, but silently fallback if it doesn't exist
       const { data: analyticsData, error: analyticsError } = await supabase
         .rpc('get_company_analytics', { 
           p_company_id: companyId, 
           p_date_range: rangeDays 
         });
 
+      // If RPC function doesn't exist (42883 error code), use fallback
       if (analyticsError) {
-        console.error('Analytics function error:', analyticsError);
-        // Fallback to individual queries
+        // Only log if it's not a "function doesn't exist" error
+        if (analyticsError.code !== '42883' && analyticsError.code !== 'P0001') {
+          console.warn('Analytics function error:', analyticsError.message || analyticsError);
+        }
         await loadAnalyticsFallback();
         return;
       }
@@ -75,31 +81,33 @@ export function AnalyticsInsights({ user, globalRefreshKey }: AnalyticsInsightsP
           totalReports: Number(data.total_reports) || 0,
           hireRate: Number(data.hire_rate) || 0
         });
+      } else {
+        // If no data, use fallback
+        await loadAnalyticsFallback();
+        return;
       }
 
-      // Load trend data using the new function
+      // Try trend functions, but fallback if they don't exist
       const [jobsTrend, interviewsTrend, reportsTrend] = await Promise.all([
         supabase.rpc('get_analytics_trends', { 
           p_company_id: companyId, 
           p_trend_type: 'jobs', 
           p_days: rangeDays 
-        }),
+        }).catch(() => ({ data: null, error: null })),
         supabase.rpc('get_analytics_trends', { 
           p_company_id: companyId, 
           p_trend_type: 'interviews', 
           p_days: rangeDays 
-        }),
+        }).catch(() => ({ data: null, error: null })),
         supabase.rpc('get_analytics_trends', { 
           p_company_id: companyId, 
           p_trend_type: 'reports', 
           p_days: rangeDays 
-        })
+        }).catch(() => ({ data: null, error: null }))
       ]);
 
-      // Combine trend data
       const trendMap = new Map<string, TrendPoint>();
       
-      // Initialize all dates in range
       const start = new Date();
       start.setDate(start.getDate() - (rangeDays - 1));
       for (let i = 0; i < rangeDays; i++) {
@@ -114,7 +122,6 @@ export function AnalyticsInsights({ user, globalRefreshKey }: AnalyticsInsightsP
         });
       }
 
-      // Fill in actual data
       if (jobsTrend.data) {
         jobsTrend.data.forEach((item: any) => {
           const existing = trendMap.get(item.trend_date);
@@ -136,18 +143,47 @@ export function AnalyticsInsights({ user, globalRefreshKey }: AnalyticsInsightsP
 
       setTrends(Array.from(trendMap.values()).sort((a, b) => a.date.localeCompare(b.date)));
 
-      // Load recent events
-      const { data: eventsData } = await supabase
-        .from('analytics_events')
-        .select('id, event_type, event_category, event_action, metadata, created_at, user_id')
-        .eq('company_id', companyId)
-        .order('created_at', { ascending: false })
-        .limit(10);
+      // Load events (optional - don't fail if table doesn't exist)
+      try {
+        const { data: eventsData, error: eventsError } = await supabase
+          .from('analytics_events')
+          .select('id, event_type, event_category, event_action, metadata, created_at, user_id')
+          .eq('company_id', companyId)
+          .order('created_at', { ascending: false })
+          .limit(10);
 
-      setEvents(eventsData || []);
+        if (!eventsError) {
+          setEvents(eventsData || []);
+        }
+      } catch (err) {
+        // Silently ignore if analytics_events table doesn't exist
+        setEvents([]);
+      }
 
-    } catch (error) {
-      console.error('Error loading analytics:', error);
+      // Load interview reports (optional - don't fail if table doesn't exist)
+      try {
+        const { data: reportsData, error: reportsError } = await supabase
+          .from('interview_reports')
+          .select('*')
+          .eq('company_id', companyId)
+          .order('created_at', { ascending: false })
+          .limit(20);
+
+        if (!reportsError) {
+          setInterviewReports(reportsData || []);
+        } else {
+          setInterviewReports([]);
+        }
+      } catch (err) {
+        // Silently ignore if interview_reports table doesn't exist yet
+        setInterviewReports([]);
+      }
+
+    } catch (error: any) {
+      // Only log unexpected errors, not missing RPC functions
+      if (error?.code !== '42883' && error?.code !== 'P0001') {
+        console.warn('Error loading analytics:', error?.message || error);
+      }
       await loadAnalyticsFallback();
     } finally {
       setLoading(false);
@@ -156,7 +192,6 @@ export function AnalyticsInsights({ user, globalRefreshKey }: AnalyticsInsightsP
 
   const loadAnalyticsFallback = async () => {
     try {
-      // Fallback to individual queries if RPC functions are not available
       const fetchWithFallback = async <T,>(cb: () => Promise<{ data: T; error: any }>, empty: T): Promise<T> => {
         try {
           const { data, error } = await cb();
@@ -203,7 +238,6 @@ export function AnalyticsInsights({ user, globalRefreshKey }: AnalyticsInsightsP
         hireRate
       });
 
-      // Simple trend: synthetic distribution over range using counts
       const points: TrendPoint[] = [];
       const start = new Date();
       start.setDate(start.getDate() - (rangeDays - 1));
@@ -220,20 +254,36 @@ export function AnalyticsInsights({ user, globalRefreshKey }: AnalyticsInsightsP
       setTrends(points);
 
       // Load events with fallback
-      const { data: eventsData } = await supabase
-        .from('analytics_events')
-        .select('id, event_type, event_category, event_action, metadata, created_at, user_id')
-        .eq('company_id', companyId)
-        .order('created_at', { ascending: false })
-        .limit(10);
+      try {
+        const { data: eventsData } = await supabase
+          .from('analytics_events')
+          .select('id, event_type, event_category, event_action, metadata, created_at, user_id')
+          .eq('company_id', companyId)
+          .order('created_at', { ascending: false })
+          .limit(10);
+        setEvents(eventsData || []);
+      } catch {
+        setEvents([]);
+      }
 
-      setEvents(eventsData || []);
+      // Load interview reports with fallback
+      try {
+        const { data: reportsData } = await supabase
+          .from('interview_reports')
+          .select('*')
+          .eq('company_id', companyId)
+          .order('created_at', { ascending: false })
+          .limit(20);
+        setInterviewReports(reportsData || []);
+      } catch {
+        setInterviewReports([]);
+      }
     } catch (error) {
-      console.error('Fallback analytics loading failed:', error);
+      // Silently handle fallback errors
+      console.warn('Fallback analytics loading failed:', error);
     }
   };
 
-  // Realtime updates
   useEffect(() => {
     if (!companyId) return;
     const channel = supabase.channel(`analytics-rt-${companyId}-${Date.now()}`);
@@ -246,7 +296,7 @@ export function AnalyticsInsights({ user, globalRefreshKey }: AnalyticsInsightsP
       }, 300); 
     };
     try {
-      const tables = ['job_postings', 'interviews', 'interview_reports', 'analytics_events', 'analytics_metrics', 'analytics_trends'];
+      const tables = ['job_postings', 'interviews', 'interview_reports', 'analytics_events', 'analytics_metrics', 'analytics_trends', 'interview_transcripts'];
       tables.forEach(table => {
         channel.on('postgres_changes', { 
           event: '*', 
@@ -275,7 +325,6 @@ export function AnalyticsInsights({ user, globalRefreshKey }: AnalyticsInsightsP
     };
   }, [companyId]);
 
-  // Focus/visibility refresh only if away long enough
   useEffect(() => {
     let lastHiddenAt = 0;
     const triggerIfStale = () => {
@@ -300,23 +349,75 @@ export function AnalyticsInsights({ user, globalRefreshKey }: AnalyticsInsightsP
     };
   }, []);
 
-  // Helpers
   const formatNum = (n: number) => new Intl.NumberFormat().format(n);
 
-  const renderMiniChart = (values: number[], color: string) => {
-    const width = 140;
-    const height = 40;
-    const max = Math.max(1, ...values);
-    const step = width / Math.max(1, values.length - 1);
-    const points = values.map((v, i) => `${i * step},${height - (v / max) * height}`).join(' ');
-    return (
-      <svg width={width} height={height} className="opacity-80">
-        <polyline fill="none" stroke={color} strokeWidth="2" points={points} />
-      </svg>
-    );
+  const viewReport = (report: any) => {
+    setSelectedReport(report);
+    setIsReportDialogOpen(true);
   };
 
-  // Show skeleton loader when loading
+  const downloadReport = (report: any) => {
+    const reportContent = `
+INTERVIEW PERFORMANCE REPORT
+============================
+
+Candidate Information:
+- Name: ${report.candidate_name || 'N/A'}
+- Email: ${report.candidate_email}
+- Interview Date: ${new Date(report.ended_at).toLocaleString()}
+- Duration: ${Math.floor(report.duration_seconds / 60)} minutes ${report.duration_seconds % 60} seconds
+
+Performance Summary:
+- Overall Score: ${Math.round(report.total_score)}%
+- Questions Asked: ${report.questions_asked}
+- Questions Answered: ${report.questions_answered}
+- Correct Answers: ${report.correct_answers}
+- Wrong Answers: ${report.wrong_answers}
+- Partial Answers: ${report.partial_answers || 0}
+
+${report.performance_metrics ? `
+Additional Metrics:
+- Response Rate: ${report.performance_metrics.response_rate || 0}%
+- Accuracy: ${report.performance_metrics.accuracy || 0}%
+- Communication Score: ${report.performance_metrics.communication_score || 0}%
+- Technical Score: ${report.performance_metrics.technical_score || 0}%
+` : ''}
+
+${report.strengths && report.strengths.length > 0 ? `
+Strengths:
+${report.strengths.map((s: string) => `• ${s}`).join('\n')}
+` : ''}
+
+${report.weaknesses && report.weaknesses.length > 0 ? `
+Areas for Improvement:
+${report.weaknesses.map((w: string) => `• ${w}`).join('\n')}
+` : ''}
+
+${report.recommendations ? `
+Recommendations:
+${report.recommendations}
+` : ''}
+
+${report.transcript_summary ? `
+Interview Summary:
+${report.transcript_summary}
+` : ''}
+
+---
+Report Generated: ${new Date().toLocaleString()}
+    `.trim();
+
+    const blob = new Blob([reportContent], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Interview_Report_${report.candidate_name || report.candidate_email}_${new Date(report.ended_at).toISOString().split('T')[0]}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   if (loading) {
     return <PageSkeleton />;
   }
@@ -355,7 +456,6 @@ export function AnalyticsInsights({ user, globalRefreshKey }: AnalyticsInsightsP
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{formatNum(stats.totalJobs)}</div>
-            <div className="mt-3">{renderMiniChart(trends.map(t => t.jobs), '#3b82f6')}</div>
           </CardContent>
         </Card>
         <Card>
@@ -365,7 +465,6 @@ export function AnalyticsInsights({ user, globalRefreshKey }: AnalyticsInsightsP
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{formatNum(stats.totalCandidates)}</div>
-            <div className="mt-3">{renderMiniChart(trends.map(t => t.interviews), '#16a34a')}</div>
           </CardContent>
         </Card>
         <Card>
@@ -375,7 +474,6 @@ export function AnalyticsInsights({ user, globalRefreshKey }: AnalyticsInsightsP
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{formatNum(stats.totalReports)}</div>
-            <div className="mt-3">{renderMiniChart(trends.map(t => t.reports), '#f59e0b')}</div>
           </CardContent>
         </Card>
         <Card>
@@ -390,213 +488,469 @@ export function AnalyticsInsights({ user, globalRefreshKey }: AnalyticsInsightsP
         </Card>
       </div>
 
-      {/* Trends & Recent Activity */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-blue-600" />
-              Activity Trends
-            </CardTitle>
-            <CardDescription>Overview for the selected date range</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {/* Chart Container */}
-              <div className="bg-muted/30 rounded-lg p-4">
-                <div className="overflow-x-auto">
-                  <div className="min-w-[600px]">
-                    {/* Chart Area */}
-                    <div className="relative h-48 mb-4">
-                      {/* Y-axis labels */}
-                      <div className="absolute left-0 top-0 h-full flex flex-col justify-between text-xs text-muted-foreground pr-2">
-                        <span>100</span>
-                        <span>75</span>
-                        <span>50</span>
-                        <span>25</span>
-                        <span>0</span>
+      {/* Interview Reports Section */}
+      <Tabs defaultValue="overview" className="mt-8">
+        <TabsList>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="reports">
+            All Reports ({interviewReports.length})
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="mt-6">
+          {interviewReports.length > 0 ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileText className="h-5 w-5 text-green-600" />
+                  Recent Interview Reports
+                </CardTitle>
+                <CardDescription>
+                  Latest performance analysis from completed interviews
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {interviewReports.slice(0, 5).map((report) => (
+                    <div 
+                      key={report.id}
+                      className="border rounded-lg p-4 hover:bg-muted/30 transition-colors"
+                    >
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex-1">
+                          <h3 className="font-semibold">{report.candidate_name || report.candidate_email}</h3>
+                          <p className="text-sm text-muted-foreground">{report.candidate_email}</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {new Date(report.ended_at).toLocaleDateString()} • {Math.floor(report.duration_seconds / 60)}m {report.duration_seconds % 60}s
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-2xl font-bold text-green-600">
+                            {Math.round(report.total_score)}%
+                          </div>
+                          <p className="text-xs text-muted-foreground">Score</p>
+                        </div>
                       </div>
-                      
-                      {/* Chart bars */}
-                      <div className="ml-8 h-full flex items-end justify-between gap-1">
-                        {trends.map((p, idx) => {
-                          const maxValue = Math.max(...trends.map(t => Math.max(t.jobs, t.interviews, t.reports)));
-                          const jobsHeight = maxValue > 0 ? (p.jobs / maxValue) * 100 : 0;
-                          const interviewsHeight = maxValue > 0 ? (p.interviews / maxValue) * 100 : 0;
-                          const reportsHeight = maxValue > 0 ? (p.reports / maxValue) * 100 : 0;
-                          
-                          return (
-                            <div key={idx} className="flex flex-col items-center gap-1 flex-1">
-                              {/* Stacked bars */}
-                              <div className="w-full h-32 flex flex-col justify-end gap-0.5">
-                                {/* Jobs bar */}
-                                {p.jobs > 0 && (
-                                  <div 
-                                    className="w-full bg-blue-500 rounded-t-sm transition-all duration-300 hover:bg-blue-600"
-                                    style={{ height: `${jobsHeight}%` }}
-                                    title={`Jobs: ${p.jobs}`}
-                                  />
-                                )}
-                                {/* Interviews bar */}
-                                {p.interviews > 0 && (
-                                  <div 
-                                    className="w-full bg-green-500 transition-all duration-300 hover:bg-green-600"
-                                    style={{ height: `${interviewsHeight}%` }}
-                                    title={`Interviews: ${p.interviews}`}
-                                  />
-                                )}
-                                {/* Reports bar */}
-                                {p.reports > 0 && (
-                                  <div 
-                                    className="w-full bg-orange-500 rounded-b-sm transition-all duration-300 hover:bg-orange-600"
-                                    style={{ height: `${reportsHeight}%` }}
-                                    title={`Reports: ${p.reports}`}
-                                  />
-                                )}
-                              </div>
-                              
-                              {/* Date label */}
-                              <div className="text-[10px] text-muted-foreground text-center leading-tight">
-                                {new Date(p.date).toLocaleDateString('en-US', { 
-                                  month: 'short', 
-                                  day: 'numeric' 
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })}
+
+                      <div className="grid grid-cols-4 gap-2 mb-3">
+                        <div className="bg-blue-50 dark:bg-blue-950/30 rounded p-2 text-center">
+                          <p className="text-lg font-bold text-blue-600">{report.questions_asked}</p>
+                          <p className="text-xs text-muted-foreground">Questions</p>
+                        </div>
+                        <div className="bg-green-50 dark:bg-green-950/30 rounded p-2 text-center">
+                          <p className="text-lg font-bold text-green-600">{report.correct_answers}</p>
+                          <p className="text-xs text-muted-foreground">Correct</p>
+                        </div>
+                        <div className="bg-red-50 dark:bg-red-950/30 rounded p-2 text-center">
+                          <p className="text-lg font-bold text-red-600">{report.wrong_answers}</p>
+                          <p className="text-xs text-muted-foreground">Wrong</p>
+                        </div>
+                        <div className="bg-amber-50 dark:bg-amber-950/30 rounded p-2 text-center">
+                          <p className="text-lg font-bold text-amber-600">{report.partial_answers || 0}</p>
+                          <p className="text-xs text-muted-foreground">Partial</p>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1 gap-2"
+                          onClick={() => viewReport(report)}
+                        >
+                          <Eye className="h-4 w-4" />
+                          View Details
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1 gap-2"
+                          onClick={() => downloadReport(report)}
+                        >
+                          <Download className="h-4 w-4" />
+                          Download
+                        </Button>
                       </div>
                     </div>
-                  </div>
+                  ))}
                 </div>
-              </div>
-              
-              {/* Legend */}
-              <div className="flex items-center justify-center gap-6">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-blue-500 rounded-sm" />
-                  <span className="text-sm font-medium">Jobs</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-green-500 rounded-sm" />
-                  <span className="text-sm font-medium">Interviews</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-orange-500 rounded-sm" />
-                  <span className="text-sm font-medium">Reports</span>
-                </div>
-              </div>
-              
-              {/* Summary Stats */}
-              <div className="grid grid-cols-3 gap-4 pt-4 border-t">
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-blue-600">
-                    {formatNum(trends.reduce((sum, t) => sum + t.jobs, 0))}
-                  </div>
-                  <div className="text-sm text-muted-foreground">Total Jobs</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-green-600">
-                    {formatNum(trends.reduce((sum, t) => sum + t.interviews, 0))}
-                  </div>
-                  <div className="text-sm text-muted-foreground">Total Interviews</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-2xl font-bold text-orange-600">
-                    {formatNum(trends.reduce((sum, t) => sum + t.reports, 0))}
-                  </div>
-                  <div className="text-sm text-muted-foreground">Total Reports</div>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Calendar className="h-5 w-5 text-green-600" />
-              Recent Events
-            </CardTitle>
-            <CardDescription>Latest activity across your workspace</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {events.length === 0 ? (
-                <div className="text-center py-8">
-                  <Calendar className="h-12 w-12 text-muted-foreground mx-auto mb-3 opacity-50" />
-                  <div className="text-muted-foreground font-medium">No recent events</div>
-                  <div className="text-sm text-muted-foreground mt-1">Activity will appear here as it happens</div>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardContent className="py-12 text-center">
+                <FileText className="h-16 w-16 text-muted-foreground mx-auto mb-4 opacity-50" />
+                <h3 className="text-lg font-medium mb-2">No Reports Yet</h3>
+                <p className="text-muted-foreground">
+                  Interview reports will appear here after candidates complete their interviews
+                </p>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="reports" className="mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5 text-green-600" />
+                All Interview Reports
+              </CardTitle>
+              <CardDescription>
+                Complete list of interview performance reports
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {interviewReports.length === 0 ? (
+                <div className="text-center py-12">
+                  <FileText className="h-16 w-16 text-muted-foreground mx-auto mb-4 opacity-50" />
+                  <h3 className="text-lg font-medium mb-2">No Reports Available</h3>
+                  <p className="text-muted-foreground">
+                    Interview reports will appear here after candidates complete their interviews
+                  </p>
                 </div>
               ) : (
-                events.map((ev) => (
-                  <div key={ev.id} className="group relative">
-                    <div className="flex items-start gap-3 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors">
-                      {/* Event Icon */}
-                      <div className="flex-shrink-0">
-                        <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
-                          <Calendar className="h-4 w-4 text-blue-600" />
+                <div className="space-y-4">
+                  {interviewReports.map((report) => (
+                    <div 
+                      key={report.id}
+                      className="border rounded-lg p-5 hover:bg-muted/30 transition-colors"
+                    >
+                      {/* Candidate Info Header */}
+                      <div className="flex items-start justify-between mb-4">
+                        <div>
+                          <h3 className="text-lg font-semibold">
+                            {report.candidate_name || report.candidate_email}
+                          </h3>
+                          <p className="text-sm text-muted-foreground">
+                            {report.candidate_email}
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Completed: {new Date(report.ended_at).toLocaleString()}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-3xl font-bold text-green-600">
+                            {Math.round(report.total_score)}%
+                          </div>
+                          <p className="text-xs text-muted-foreground">Overall Score</p>
                         </div>
                       </div>
-                      
-                      {/* Event Content */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1">
-                            <div className="text-sm font-medium text-foreground">
-                              {ev.event_category && ev.event_action 
-                                ? `${ev.event_category} ${ev.event_action}`
-                                    .replace(/_/g, ' ')
-                                    .replace(/\b\w/g, (l: string) => l.toUpperCase())
-                                : ev.event_type
-                                    ?.replace(/_/g, ' ')
-                                    .replace(/\b\w/g, (l: string) => l.toUpperCase()) || 'Event'
-                              }
-                            </div>
-                            <div className="text-xs text-muted-foreground mt-1">
-                              {new Date(ev.created_at).toLocaleString('en-US', {
-                                month: 'short',
-                                day: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              })}
-                            </div>
-                            
-                            {/* Metadata */}
-                            {ev.metadata && Object.keys(ev.metadata).length > 0 && (
-                              <div className="mt-2 space-y-1">
-                                {Object.entries(ev.metadata).slice(0, 2).map(([key, value]) => (
-                                  <div key={key} className="text-xs text-muted-foreground">
-                                    <span className="font-medium capitalize">{key.replace(/_/g, ' ')}:</span> {String(value)}
-                                  </div>
-                                ))}
-                                {Object.keys(ev.metadata).length > 2 && (
-                                  <div className="text-xs text-muted-foreground">
-                                    +{Object.keys(ev.metadata).length - 2} more
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                          
-                          {/* User Badge */}
-                          <Badge 
-                            variant={ev.user_id ? "secondary" : "outline"} 
-                            className="text-xs flex-shrink-0"
-                          >
-                            {ev.user_id ? ev.user_id.slice(0, 8) : 'System'}
-                          </Badge>
+
+                      {/* Performance Metrics Grid */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                        <div className="bg-blue-50 dark:bg-blue-950/30 rounded-lg p-3">
+                          <p className="text-xs text-muted-foreground mb-1">Questions</p>
+                          <p className="text-2xl font-bold text-blue-600">
+                            {report.questions_asked}
+                          </p>
+                          <p className="text-xs text-muted-foreground">Asked</p>
                         </div>
+                        <div className="bg-green-50 dark:bg-green-950/30 rounded-lg p-3">
+                          <p className="text-xs text-muted-foreground mb-1">Correct</p>
+                          <p className="text-2xl font-bold text-green-600">
+                            {report.correct_answers}
+                          </p>
+                          <p className="text-xs text-muted-foreground">Answers</p>
+                        </div>
+                        <div className="bg-red-50 dark:bg-red-950/30 rounded-lg p-3">
+                          <p className="text-xs text-muted-foreground mb-1">Wrong</p>
+                          <p className="text-2xl font-bold text-red-600">
+                            {report.wrong_answers}
+                          </p>
+                          <p className="text-xs text-muted-foreground">Answers</p>
+                        </div>
+                        <div className="bg-amber-50 dark:bg-amber-950/30 rounded-lg p-3">
+                          <p className="text-xs text-muted-foreground mb-1">Partial</p>
+                          <p className="text-2xl font-bold text-amber-600">
+                            {report.partial_answers || 0}
+                          </p>
+                          <p className="text-xs text-muted-foreground">Answers</p>
+                        </div>
+                      </div>
+
+                      {/* Additional Metrics */}
+                      {report.performance_metrics && (
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                          {report.performance_metrics.response_rate !== undefined && (
+                            <div className="text-center p-2 bg-muted/50 rounded">
+                              <p className="text-xs text-muted-foreground">Response Rate</p>
+                              <p className="text-lg font-semibold">{report.performance_metrics.response_rate}%</p>
+                            </div>
+                          )}
+                          {report.performance_metrics.accuracy !== undefined && (
+                            <div className="text-center p-2 bg-muted/50 rounded">
+                              <p className="text-xs text-muted-foreground">Accuracy</p>
+                              <p className="text-lg font-semibold">{report.performance_metrics.accuracy}%</p>
+                            </div>
+                          )}
+                          {report.performance_metrics.communication_score !== undefined && (
+                            <div className="text-center p-2 bg-muted/50 rounded">
+                              <p className="text-xs text-muted-foreground">Communication</p>
+                              <p className="text-lg font-semibold">{report.performance_metrics.communication_score}%</p>
+                            </div>
+                          )}
+                          {report.performance_metrics.technical_score !== undefined && (
+                            <div className="text-center p-2 bg-muted/50 rounded">
+                              <p className="text-xs text-muted-foreground">Technical</p>
+                              <p className="text-lg font-semibold">{report.performance_metrics.technical_score}%</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Strengths & Weaknesses */}
+                      <div className="grid md:grid-cols-2 gap-4 mb-4">
+                        {report.strengths && report.strengths.length > 0 && (
+                          <div>
+                            <h4 className="text-sm font-semibold text-green-600 mb-2">
+                              💪 Strengths
+                            </h4>
+                            <ul className="space-y-1">
+                              {report.strengths.map((strength: string, idx: number) => (
+                                <li key={idx} className="text-sm text-muted-foreground flex items-start gap-2">
+                                  <span className="text-green-500 mt-0.5">✓</span>
+                                  <span>{strength}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {report.weaknesses && report.weaknesses.length > 0 && (
+                          <div>
+                            <h4 className="text-sm font-semibold text-amber-600 mb-2">
+                              📝 Areas for Improvement
+                            </h4>
+                            <ul className="space-y-1">
+                              {report.weaknesses.map((weakness: string, idx: number) => (
+                                <li key={idx} className="text-sm text-muted-foreground flex items-start gap-2">
+                                  <span className="text-amber-500 mt-0.5">→</span>
+                                  <span>{weakness}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Recommendations */}
+                      {report.recommendations && (
+                        <div className="bg-purple-50 dark:bg-purple-950/30 rounded-lg p-4 mb-4">
+                          <h4 className="text-sm font-semibold text-purple-600 mb-2">
+                            💡 Recommendations
+                          </h4>
+                          <p className="text-sm text-muted-foreground">
+                            {report.recommendations}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Action Buttons */}
+                      <div className="flex gap-2 pt-3 border-t">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1 gap-2"
+                          onClick={() => viewReport(report)}
+                        >
+                          <Eye className="h-4 w-4" />
+                          View Full Report
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="default"
+                          className="flex-1 gap-2 bg-green-600 hover:bg-green-700"
+                          onClick={() => downloadReport(report)}
+                        >
+                          <Download className="h-4 w-4" />
+                          Download Report
+                        </Button>
+                      </div>
+
+                      {/* Duration */}
+                      <div className="mt-3 text-xs text-muted-foreground text-center">
+                        Interview Duration: {Math.floor(report.duration_seconds / 60)}m {report.duration_seconds % 60}s
                       </div>
                     </div>
-                  </div>
-                ))
+                  ))}
+                </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      {/* View Report Dialog */}
+      <Dialog open={isReportDialogOpen} onOpenChange={setIsReportDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5 text-green-600" />
+              Interview Performance Report
+            </DialogTitle>
+            <DialogDescription>
+              Detailed analysis of candidate performance
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedReport && (
+            <div className="space-y-6">
+              {/* Candidate Info */}
+              <div className="bg-muted/50 rounded-lg p-4">
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Candidate Name</p>
+                    <p className="text-lg font-semibold">{selectedReport.candidate_name || 'N/A'}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Email</p>
+                    <p className="text-lg font-semibold">{selectedReport.candidate_email}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Interview Date</p>
+                    <p className="text-lg font-semibold">
+                      {new Date(selectedReport.ended_at).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Duration</p>
+                    <p className="text-lg font-semibold">
+                      {Math.floor(selectedReport.duration_seconds / 60)}m {selectedReport.duration_seconds % 60}s
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Overall Score */}
+              <div className="text-center py-6 bg-green-50 dark:bg-green-950/30 rounded-lg">
+                <p className="text-sm text-muted-foreground mb-2">Overall Performance Score</p>
+                <p className="text-6xl font-bold text-green-600">
+                  {Math.round(selectedReport.total_score)}%
+                </p>
+              </div>
+
+              {/* Performance Details */}
+              <div>
+                <h3 className="text-lg font-semibold mb-4">Performance Breakdown</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="text-center p-4 bg-blue-50 dark:bg-blue-950/30 rounded-lg">
+                    <p className="text-3xl font-bold text-blue-600">{selectedReport.questions_asked}</p>
+                    <p className="text-sm text-muted-foreground mt-1">Questions Asked</p>
+                  </div>
+                  <div className="text-center p-4 bg-green-50 dark:bg-green-950/30 rounded-lg">
+                    <p className="text-3xl font-bold text-green-600">{selectedReport.correct_answers}</p>
+                    <p className="text-sm text-muted-foreground mt-1">Correct Answers</p>
+                  </div>
+                  <div className="text-center p-4 bg-red-50 dark:bg-red-950/30 rounded-lg">
+                    <p className="text-3xl font-bold text-red-600">{selectedReport.wrong_answers}</p>
+                    <p className="text-sm text-muted-foreground mt-1">Wrong Answers</p>
+                  </div>
+                  <div className="text-center p-4 bg-amber-50 dark:bg-amber-950/30 rounded-lg">
+                    <p className="text-3xl font-bold text-amber-600">{selectedReport.partial_answers || 0}</p>
+                    <p className="text-sm text-muted-foreground mt-1">Partial Answers</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Additional Metrics */}
+              {selectedReport.performance_metrics && (
+                <div>
+                  <h3 className="text-lg font-semibold mb-4">Additional Metrics</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {selectedReport.performance_metrics.response_rate !== undefined && (
+                      <div className="text-center p-4 border rounded-lg">
+                        <p className="text-2xl font-bold">{selectedReport.performance_metrics.response_rate}%</p>
+                        <p className="text-sm text-muted-foreground mt-1">Response Rate</p>
+                      </div>
+                    )}
+                    {selectedReport.performance_metrics.accuracy !== undefined && (
+                      <div className="text-center p-4 border rounded-lg">
+                        <p className="text-2xl font-bold">{selectedReport.performance_metrics.accuracy}%</p>
+                        <p className="text-sm text-muted-foreground mt-1">Accuracy</p>
+                      </div>
+                    )}
+                    {selectedReport.performance_metrics.communication_score !== undefined && (
+                      <div className="text-center p-4 border rounded-lg">
+                        <p className="text-2xl font-bold">{selectedReport.performance_metrics.communication_score}%</p>
+                        <p className="text-sm text-muted-foreground mt-1">Communication</p>
+                      </div>
+                    )}
+                    {selectedReport.performance_metrics.technical_score !== undefined && (
+                      <div className="text-center p-4 border rounded-lg">
+                        <p className="text-2xl font-bold">{selectedReport.performance_metrics.technical_score}%</p>
+                        <p className="text-sm text-muted-foreground mt-1">Technical Skills</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Strengths & Weaknesses */}
+              <div className="grid md:grid-cols-2 gap-6">
+                {selectedReport.strengths && selectedReport.strengths.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-semibold text-green-600 mb-3">💪 Strengths</h3>
+                    <ul className="space-y-2">
+                      {selectedReport.strengths.map((strength: string, idx: number) => (
+                        <li key={idx} className="flex items-start gap-3 p-3 bg-green-50 dark:bg-green-950/30 rounded-lg">
+                          <span className="text-green-500 text-xl">✓</span>
+                          <span className="text-sm">{strength}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {selectedReport.weaknesses && selectedReport.weaknesses.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-semibold text-amber-600 mb-3">📝 Areas for Improvement</h3>
+                    <ul className="space-y-2">
+                      {selectedReport.weaknesses.map((weakness: string, idx: number) => (
+                        <li key={idx} className="flex items-start gap-3 p-3 bg-amber-50 dark:bg-amber-950/30 rounded-lg">
+                          <span className="text-amber-500 text-xl">→</span>
+                          <span className="text-sm">{weakness}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              {/* Recommendations */}
+              {selectedReport.recommendations && (
+                <div>
+                  <h3 className="text-lg font-semibold text-purple-600 mb-3">💡 Hiring Recommendations</h3>
+                  <div className="p-4 bg-purple-50 dark:bg-purple-950/30 rounded-lg">
+                    <p className="text-sm leading-relaxed">{selectedReport.recommendations}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Transcript Summary */}
+              {selectedReport.transcript_summary && (
+                <div>
+                  <h3 className="text-lg font-semibold mb-3">📋 Interview Summary</h3>
+                  <div className="p-4 bg-muted/50 rounded-lg">
+                    <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                      {selectedReport.transcript_summary}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Download Button */}
+              <div className="flex justify-end pt-4 border-t">
+                <Button
+                  className="gap-2 bg-green-600 hover:bg-green-700"
+                  onClick={() => downloadReport(selectedReport)}
+                >
+                  <Download className="h-4 w-4" />
+                  Download Full Report
+                </Button>
+              </div>
             </div>
-          </CardContent>
-        </Card>
-      </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
-
-
