@@ -36,32 +36,9 @@ export default function LoginPage() {
   const { signIn, user, loading: authLoading } = useAuth()
   const router = useRouter()
 
-  // If already authenticated, redirect away from login
-  useEffect(() => {
-    if (!authLoading && user) {
-      console.log('✅ User already authenticated, redirecting to dashboard');
-      // Use a small delay to ensure smooth redirect
-      setTimeout(() => {
-        try { 
-          router.replace('/') 
-        } catch (error) {
-          console.log('Router redirect failed, using window.location');
-          if (typeof window !== 'undefined') {
-            window.location.assign('/')
-          }
-        }
-      }, 100)
-    }
-  }, [authLoading, user, router])
-
-  // Show login loader when user is authenticated and being redirected
-  if (!authLoading && user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-white to-purple-50">
-        <LoginLoader />
-      </div>
-    )
-  }
+  // Note: We no longer redirect authenticated users away from login
+  // This allows users to always see the login page when the server restarts
+  // Users can still manually navigate to dashboard after logging in
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -90,9 +67,17 @@ export default function LoginPage() {
       }
 
       const hasSession = await waitForSession(3000)
-      try { router.replace('/') } catch {}
+      // Redirect to dashboard after successful login
+      try { 
+        router.replace('/dashboard') 
+      } catch (error) {
+        console.log('Router redirect failed, using window.location');
+        if (typeof window !== 'undefined') {
+          window.location.assign('/dashboard')
+        }
+      }
       if (!hasSession && typeof window !== 'undefined') {
-        window.location.assign('/')
+        window.location.assign('/dashboard')
       }
     }
 
