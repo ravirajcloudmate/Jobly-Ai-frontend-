@@ -53,17 +53,52 @@ function DynamicFavicon() {
     const LOGO_STORAGE_KEY = 'branding_company_logo'
 
     const applyFavicon = (iconUrl?: string | null) => {
+      // Remove all existing favicon links first to avoid conflicts
+      const existingLinks = document.querySelectorAll<HTMLLinkElement>('link[rel*="icon"]')
+      existingLinks.forEach(link => link.remove())
+
       const href = iconUrl && iconUrl.trim() !== '' ? iconUrl : DEFAULT_ICON
-      const rels = ['icon', 'shortcut icon', 'apple-touch-icon']
-      rels.forEach((rel) => {
-        let link = document.querySelector<HTMLLinkElement>(`link[rel='${rel}']`)
-        if (!link) {
-          link = document.createElement('link')
-          link.rel = rel
-          document.head.appendChild(link)
-        }
-        link.href = href
-      })
+      
+      // Determine the type based on file extension
+      const getType = (url: string): string => {
+        if (url.endsWith('.svg')) return 'image/svg+xml'
+        if (url.endsWith('.png')) return 'image/png'
+        if (url.endsWith('.jpg') || url.endsWith('.jpeg')) return 'image/jpeg'
+        if (url.endsWith('.ico')) return 'image/x-icon'
+        // Default to PNG for uploaded images, SVG for default
+        return url === DEFAULT_ICON ? 'image/svg+xml' : 'image/png'
+      }
+
+      const type = getType(href)
+      const sizes = href === DEFAULT_ICON ? 'any' : '32x32'
+
+      // Add cache buster for uploaded images to force browser refresh
+      let finalHref = href
+      if (href !== DEFAULT_ICON && !href.includes('?')) {
+        const timestamp = new Date().getTime()
+        finalHref = `${href}?_=${timestamp}`
+      }
+
+      // Create main favicon link
+      const faviconLink = document.createElement('link')
+      faviconLink.rel = 'icon'
+      faviconLink.type = type
+      faviconLink.href = finalHref
+      if (sizes !== 'any') faviconLink.sizes = sizes
+      document.head.appendChild(faviconLink)
+
+      // Create shortcut icon link
+      const shortcutLink = document.createElement('link')
+      shortcutLink.rel = 'shortcut icon'
+      shortcutLink.type = type
+      shortcutLink.href = finalHref
+      document.head.appendChild(shortcutLink)
+
+      // Create apple-touch-icon for better mobile support
+      const appleLink = document.createElement('link')
+      appleLink.rel = 'apple-touch-icon'
+      appleLink.href = finalHref
+      document.head.appendChild(appleLink)
     }
 
     const getStoredLogo = () => {
@@ -74,6 +109,7 @@ function DynamicFavicon() {
       }
     }
 
+    // Apply favicon on mount
     applyFavicon(getStoredLogo())
 
     const handleBrandingUpdate = (event: Event) => {

@@ -12,13 +12,13 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { 
-  Search, 
-  Filter, 
-  Link2, 
-  Mail, 
-  Clock, 
-  CheckCircle, 
+import {
+  Search,
+  Filter,
+  Link2,
+  Mail,
+  Clock,
+  CheckCircle,
   XCircle,
   Play,
   Pause,
@@ -61,7 +61,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false);
   const [jobPostings, setJobPostings] = useState<any[]>([]);
   const [inviteLoading, setInviteLoading] = useState(false);
-  
+
   // Invitation form state
   const [inviteForm, setInviteForm] = useState({
     candidate_email: '',
@@ -89,7 +89,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [isDeletingInvitation, setIsDeletingInvitation] = useState(false);
-  
+
   // Transcript dialog state
   const [isTranscriptDialogOpen, setIsTranscriptDialogOpen] = useState(false);
   const [transcriptData, setTranscriptData] = useState<any | null>(null);
@@ -99,7 +99,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
   const generateCombinedSummary = async (formData: any, pdfFile: File | null) => {
     setIsGeneratingSummary(true);
     setError(''); // Clear previous errors
-    
+
     try {
       // Check if we have required data
       if (!formData.candidate_name || !formData.candidate_email) {
@@ -111,7 +111,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
       }
 
       console.log('Generating combined summary from profile and PDF...');
-      
+
       // First, analyze the PDF to extract content
       let analysis;
       try {
@@ -132,18 +132,18 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         analysis = pdfData.analysis; // Extract the analysis from the response
         setResumeAnalysis(analysis); // Store for later use
         console.log('PDF analysis successful:', analysis);
-        
+
         // Validate that we got meaningful analysis
         if (!analysis || (!analysis.candidateInfo && !analysis.skills && !analysis.experience)) {
           throw new Error('PDF analysis returned empty or invalid data');
         }
-        
+
       } catch (apiError) {
         console.error('PDF analysis failed:', apiError);
         const errorMessage = apiError instanceof Error ? apiError.message : 'Unknown error';
         throw new Error(`Failed to analyze PDF: ${errorMessage}. Please ensure the PDF is readable and try again.`);
       }
-      
+
       // Now generate combined summary using both profile data and PDF analysis
       console.log('Sending combined data to API:', {
         formData: formData,
@@ -155,7 +155,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
           projects: analysis.projects?.length || 0
         }
       });
-      
+
       const response = await fetch('/api/generate-summary', {
         method: 'POST',
         headers: {
@@ -175,10 +175,10 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
 
       const data = await response.json();
       const summary = data.summary || 'Failed to generate summary';
-      
+
       console.log('Combined summary generated successfully');
       setGeneratedSummary(summary);
-      
+
       // Save summary to database
       try {
         await saveCandidateSummary(formData, summary);
@@ -186,7 +186,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         console.warn('Failed to save to database, but summary was generated:', dbError);
         // Don't throw here, just log the warning
       }
-      
+
     } catch (error) {
       console.error('Error generating summary:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to generate profile summary. Please try again.';
@@ -207,7 +207,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
   ) => {
     try {
       console.log('📤 Sending candidate details to backend...');
-      
+
       // Use Next.js API route instead of direct backend call to avoid CORS issues
       const response = await fetch('/api/send-candidate-details', {
         method: 'POST',
@@ -235,7 +235,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
         console.error('❌ Failed to send candidate details:', response.status, errorData);
-        
+
         // Don't block the invitation flow if backend is unavailable
         // This is optional functionality
         if (response.status === 503 || response.status === 404) {
@@ -264,7 +264,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
   const getLivekitToken = async (roomId: string, candidateIdentity: string) => {
     try {
       console.log('🎫 Getting LiveKit token...', { roomId, candidateIdentity });
-      
+
       const response = await fetch('/api/token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -321,11 +321,11 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
       }
 
       await loadInterviews();
-      
+
       // Emit global event for calendar to update in real-time
       globalEvents.emit('calendar:refresh');
       globalEvents.emit('refresh');
-      
+
       showNotification('success', 'Deleted', 'Invitation deleted successfully.');
     } catch (e) {
       console.error('Failed to delete interview:', e);
@@ -398,7 +398,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
 
       // Fetch transcript from API
       const response = await fetch(`/api/interview-transcript?invitation_id=${invitationId}`);
-      
+
       if (!response.ok) {
         if (response.status === 404) {
           console.log('No transcript found for this interview');
@@ -410,7 +410,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
       }
 
       const data = await response.json();
-      
+
       if (data.success && data.transcript) {
         console.log('✅ Transcript loaded successfully');
         setTranscriptData(data.transcript);
@@ -443,7 +443,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
   const saveCandidateSummary = async (formData: any, summary: string, invitationId?: string | null) => {
     try {
       console.log('💾 Attempting to save candidate summary...');
-      
+
       const summaryRecord = {
         candidate_name: formData.candidate_name || null,
         candidate_email: formData.candidate_email,
@@ -513,12 +513,12 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
           // Don't show error to user - summary was still generated
           return;
         }
-        
+
         // For other errors, just log
         console.warn('⚠️ Could not save summary to database:', error.message);
         return;
       }
-      
+
       console.log('✅ Candidate summary saved to database');
       showNotification('success', 'Summary generated and saved!', '');
 
@@ -635,28 +635,28 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
     if (!companyIdState) return;
     const channel = supabase.channel(`interviews-rt-${companyIdState}-${Date.now()}`);
     let timer: any;
-    const refresh = () => { 
-      clearTimeout(timer); 
+    const refresh = () => {
+      clearTimeout(timer);
       timer = setTimeout(() => {
         console.log('InterviewManagement: Refreshing data due to real-time update');
         setReloadKey(Date.now());
-      }, 300); 
+      }, 300);
     };
     try {
-      channel.on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'interview_invitations', 
-        filter: `company_id=eq.${companyIdState}` 
+      channel.on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'interview_invitations',
+        filter: `company_id=eq.${companyIdState}`
       }, (payload) => {
         console.log('InterviewManagement: interview_invitations changed:', payload.eventType);
         refresh();
       });
-      channel.on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'interviews', 
-        filter: `company_id=eq.${companyIdState}` 
+      channel.on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'interviews',
+        filter: `company_id=eq.${companyIdState}`
       }, (payload) => {
         console.log('InterviewManagement: interviews changed:', payload.eventType);
         refresh();
@@ -664,12 +664,12 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
       channel.subscribe((status) => {
         console.log('InterviewManagement realtime subscription status:', status);
       });
-    } catch (e) { 
-      console.error('InterviewManagement realtime error:', e); 
+    } catch (e) {
+      console.error('InterviewManagement realtime error:', e);
     }
-    return () => { 
+    return () => {
       clearTimeout(timer);
-      try { 
+      try {
         supabase.removeChannel(channel);
         console.log('InterviewManagement: Removed realtime channel');
       } catch (e) {
@@ -758,7 +758,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         // Transform invitation data to display format
         const transformedData = (invitationsData || []).map((inv: any) => {
           const session = inv.interview_sessions?.[0]; // Get the first session if exists
-          
+
           return {
             id: inv.id,
             companyBrandingId: inv.company_branding_id || null,
@@ -793,7 +793,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
             candidate_projects: inv.candidate_projects || ''
           };
         });
-        
+
         setInterviews(transformedData);
       }
     } catch (err) {
@@ -844,7 +844,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         default: return 'Session Ready';
       }
     }
-    
+
     switch (dbStatus) {
       case 'completed': return 'Completed';
       case 'in_progress': case 'started': return 'In Progress';
@@ -865,7 +865,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         default: return 10;
       }
     }
-    
+
     switch (dbStatus) {
       case 'completed': return 100;
       case 'in_progress': case 'started': return 60;
@@ -984,7 +984,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
           .select('*')
           .eq('id', templateIdValue)
           .maybeSingle();
-        
+
         if (templateData) {
           agentData = templateData;
           agentId = templateData.id;  // UUID from database
@@ -1011,7 +1011,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
       // Generate unique room ID for LiveKit
       const roomId = `room_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const sessionToken = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
+
       console.log('🏠 Generated Room ID:', roomId);
       console.log('🎫 Generated Session Token:', sessionToken);
 
@@ -1078,7 +1078,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
           time: inviteForm.interview_time
         });
       }
-      
+
       const { error: updateError } = await supabase
         .from('interview_invitations')
         .update({
@@ -1117,7 +1117,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
 
       // Try to create session - but don't fail if table doesn't exist
       let sessionId = sessionToken; // Fallback to token if insert fails
-      
+
       try {
         const { data: session, error: sessionError } = await supabase
           .from('interview_sessions')
@@ -1163,17 +1163,17 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
 
       // Send candidate details to backend agent (optional - doesn't block invitation)
       const candidateDetailsSent = await sendCandidateDetailsToBackend(roomId, inviteForm, jobData, agentData, generatedSummary, resumeAnalysis);
-      
+
       if (candidateDetailsSent) {
         console.log('✅ Candidate details sent to backend successfully');
       } else {
         console.warn('⚠️ Candidate details not sent to backend, but continuing with invitation creation');
       }
-      
+
       // Get LiveKit token (essential for interview, so always attempt regardless of candidate details status)
       const candidateIdentity = `candidate-${inviteForm.candidate_email.split('@')[0]}-${Date.now()}`;
       const tokenData = await getLivekitToken(roomId, candidateIdentity);
-      
+
       if (!tokenData) {
         console.warn('⚠️ Failed to get LiveKit token, but continuing with invitation creation');
       } else {
@@ -1210,7 +1210,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
             .maybeSingle();
           finalCompanyId = userData?.company_id || user?.company_id || null;
         }
-        
+
         console.log('📧 Using companyId for email settings:', finalCompanyId);
         console.log('📧 Email settings will be fetched dynamically from Settings → Email Settings');
 
@@ -1283,7 +1283,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
       setGeneratedSummary('');
       setResumeAnalysis(null);
       setIsSideDrawerOpen(false);
-      
+
       // Reload interviews
       await loadInterviews();
 
@@ -1323,7 +1323,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
           .maybeSingle();
         finalCompanyId = userData?.company_id || user?.company_id || null;
       }
-      
+
       console.log('📧 Sending reminder using companyId for email settings:', finalCompanyId);
       console.log('📧 Email settings will be fetched dynamically from Settings → Email Settings');
 
@@ -1343,14 +1343,14 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
 
       if (emailResponse.ok) {
         console.log('Reminder sent successfully');
-        
+
         // Show success notification
         showNotification(
           'success',
           'Reminder sent',
           `Interview reminder sent to ${interview.candidateName}.`
         );
-        
+
         await loadInterviews(); // Refresh data
       } else {
         const errorData = await emailResponse.json().catch(() => ({}));
@@ -1368,11 +1368,11 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
   // Filter interviews based on search and status
   const filteredInterviews = interviews.filter(interview => {
     const matchesSearch = interview.candidateName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         interview.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         interview.jobTitle.toLowerCase().includes(searchTerm.toLowerCase());
-    
+      interview.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      interview.jobTitle.toLowerCase().includes(searchTerm.toLowerCase());
+
     const matchesStatus = filterStatus === 'all' || interview.status.toLowerCase().replace(' ', '') === filterStatus;
-    
+
     return matchesSearch && matchesStatus;
   });
 
@@ -1396,8 +1396,8 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
           </div>
           <p className="text-muted-foreground">Track interview links, candidate progress, and manage invitations.</p>
         </div>
-        <Button 
-          size="lg" 
+        <Button
+          size="lg"
           className="gap-2 bg-[#e30d0d] hover:bg-[#c50c0c] text-white"
           onClick={() => setIsSideDrawerOpen(true)}
         >
@@ -1410,14 +1410,14 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
       <div className="flex items-center gap-4 mb-6">
         <div className="flex-1 relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input 
-            placeholder="Search candidates by name, email, or job title..." 
+          <Input
+            placeholder="Search candidates by name, email, or job title..."
             className="pl-10"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
         </div>
-        <select 
+        <select
           className="px-3 py-2 border border-input rounded-md bg-background"
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value)}
@@ -1503,8 +1503,8 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
                   <div className="mt-3 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       {(interview.roomId || interview.link) && (
-                        <Button 
-                          size="sm" 
+                        <Button
+                          size="sm"
                           variant="default"
                           className="h-7 px-2 bg-green-600 hover:bg-green-700 text-white text-[11px]"
                           onClick={() => {
@@ -1520,8 +1520,8 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
                           Join Interview
                         </Button>
                       )}
-                      <Button 
-                        size="sm" 
+                      <Button
+                        size="sm"
                         variant="ghost"
                         className="h-7 px-2 text-blue-600"
                         onClick={() => copyToClipboard(interview.link)}
@@ -1531,8 +1531,8 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
                         <span className="text-[11px]">Copy</span>
                       </Button>
                       {interview.status === 'Not Started' && (
-                        <Button 
-                          size="sm" 
+                        <Button
+                          size="sm"
                           variant="ghost"
                           className="h-7 px-2"
                           onClick={() => sendReminder(interview.id, interview.email)}
@@ -1542,18 +1542,17 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
                           <span className="text-[11px]">Remind</span>
                         </Button>
                       )}
-                      {(interview.status === 'Completed' || interview.status === 'completed') && (
-                        <Button 
-                          size="sm" 
-                          variant="ghost"
-                          className="h-7 px-2 text-purple-600 hover:text-purple-700"
-                          onClick={() => openTranscriptDialog(interview.invitation_id || interview.id)}
-                          title="Show Interview Transcript"
-                        >
-                          <MessageSquare className="h-3 w-3" />
-                          <span className="text-[11px]">Transcript</span>
-                        </Button>
-                      )}
+                      {/* Show transcript button for all interviews */}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-purple-600 hover:text-purple-700"
+                        onClick={() => openTranscriptDialog(interview.invitation_id || interview.id)}
+                        title="Show Interview Transcript"
+                      >
+                        <MessageSquare className="h-3 w-3" />
+                        <span className="text-[11px]">Transcript</span>
+                      </Button>
                     </div>
                     {interview.type === 'invitation' && (
                       <div className="flex items-center gap-1">
@@ -1676,7 +1675,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
                       <p className="text-sm text-muted-foreground">{interview.jobTitle}</p>
                     </div>
                   </div>
-                    <Button size="sm" className="gap-1" onClick={() => sendReminder(interview.id, interview.email)}>
+                  <Button size="sm" className="gap-1" onClick={() => sendReminder(interview.id, interview.email)}>
                     <Send className="h-4 w-4" />
                     Remind
                   </Button>
@@ -1687,287 +1686,287 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
         </TabsContent>
       </Tabs>
 
-        {/* Side Drawer for Invite Candidate */}
-        {isSideDrawerOpen && (
-          <div className="fixed inset-0 z-50 flex">
-            {/* Backdrop */}
-            <div 
-              className="flex-1 bg-black/20 backdrop-blur-sm"
-              onClick={() => setIsSideDrawerOpen(false)}
-            />
-            
-            {/* Drawer Panel */}
-            <div className="w-full max-w-2xl bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700 shadow-xl">
-              <div className="flex h-full flex-col">
-                {/* Header */}
-                <div className="flex items-center justify-between border-b px-6 py-4">
-                  <div>
-                    <h2 className="text-xl font-semibold">Invite New Candidate</h2>
-                    <p className="text-sm text-muted-foreground">Create comprehensive candidate profile</p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setIsSideDrawerOpen(false)}
-                    className="h-8 w-8 p-0"
-                  >
-                    <X className="h-4 w-4" />
-                  </Button>
+      {/* Side Drawer for Invite Candidate */}
+      {isSideDrawerOpen && (
+        <div className="fixed inset-0 z-50 flex">
+          {/* Backdrop */}
+          <div
+            className="flex-1 bg-black/20 backdrop-blur-sm"
+            onClick={() => setIsSideDrawerOpen(false)}
+          />
+
+          {/* Drawer Panel */}
+          <div className="w-full max-w-2xl bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700 shadow-xl">
+            <div className="flex h-full flex-col">
+              {/* Header */}
+              <div className="flex items-center justify-between border-b px-6 py-4">
+                <div>
+                  <h2 className="text-xl font-semibold">Invite New Candidate</h2>
+                  <p className="text-sm text-muted-foreground">Create comprehensive candidate profile</p>
                 </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsSideDrawerOpen(false)}
+                  className="h-8 w-8 p-0"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
 
-                {/* Content */}
-                <div className="flex-1 overflow-y-auto px-6 py-4">
-                  {error && (
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
-                      <p className="text-red-800 text-sm">{error}</p>
-                    </div>
-                  )}
+              {/* Content */}
+              <div className="flex-1 overflow-y-auto px-6 py-4">
+                {error && (
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+                    <p className="text-red-800 text-sm">{error}</p>
+                  </div>
+                )}
 
-                  <div className="space-y-6">
-                    {/* Basic Information */}
-                    <div>
-                      <h3 className="text-lg font-medium mb-4">Basic Information</h3>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="text-sm font-medium">Candidate Name *</label>
-                          <Input 
-                            placeholder="John Doe" 
-                            className="mt-1"
-                            value={inviteForm.candidate_name}
-                            onChange={(e) => setInviteForm({...inviteForm, candidate_name: e.target.value})}
-                          />
-                        </div>
-                        <div>
-                          <label className="text-sm font-medium">Candidate Email *</label>
-                          <Input 
-                            placeholder="candidate@email.com" 
-                            className="mt-1"
-                            value={inviteForm.candidate_email}
-                            onChange={(e) => setInviteForm({...inviteForm, candidate_email: e.target.value})}
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Job Information */}
-                    <div>
-                      <h3 className="text-lg font-medium mb-4">Job Information</h3>
+                <div className="space-y-6">
+                  {/* Basic Information */}
+                  <div>
+                    <h3 className="text-lg font-medium mb-4">Basic Information</h3>
+                    <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="text-sm font-medium">Job Posting *</label>
-                        <select 
-                          className="w-full mt-1 p-2 border border-input rounded-md bg-background"
-                          value={inviteForm.job_id}
-                          onChange={(e) => setInviteForm({...inviteForm, job_id: e.target.value})}
-                        >
-                          <option value="">Select a job position</option>
-                          {jobPostings.map(job => (
-                            <option key={job.id} value={job.id}>
-                              {job.job_title} - {job.department}
-                            </option>
-                          ))}
-                        </select>
+                        <label className="text-sm font-medium">Candidate Name *</label>
+                        <Input
+                          placeholder="John Doe"
+                          className="mt-1"
+                          value={inviteForm.candidate_name}
+                          onChange={(e) => setInviteForm({ ...inviteForm, candidate_name: e.target.value })}
+                        />
                       </div>
-                    </div>
-
-                    {/* Skills and Experience */}
-                    <div>
-                      <h3 className="text-lg font-medium mb-4">Skills & Experience</h3>
-                      <div className="space-y-4">
-                        <div>
-                          <label className="text-sm font-medium">Candidate Skills</label>
-                          <Input 
-                            placeholder="React, JavaScript, Node.js, Python..." 
-                            className="mt-1"
-                            value={inviteForm.candidate_skills}
-                            onChange={(e) => setInviteForm({...inviteForm, candidate_skills: e.target.value})}
-                          />
-                        </div>
-                        <div>
-                          <label className="text-sm font-medium">Experience</label>
-                          <Input 
-                            placeholder="5 years in software development..." 
-                            className="mt-1"
-                            value={inviteForm.experience}
-                            onChange={(e) => setInviteForm({...inviteForm, experience: e.target.value})}
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Interview Schedule */}
-                    <div>
-                      <h3 className="text-lg font-medium mb-4">Interview Schedule</h3>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="text-sm font-medium">Interview Date</label>
-                          <Input 
-                            type="date"
-                            className="mt-1"
-                            value={inviteForm.interview_date}
-                            onChange={(e) => setInviteForm({...inviteForm, interview_date: e.target.value})}
-                          />
-                        </div>
-                        <div>
-                          <label className="text-sm font-medium">Interview Time</label>
-                          <Input 
-                            type="time"
-                            className="mt-1"
-                            value={inviteForm.interview_time}
-                            onChange={(e) => setInviteForm({...inviteForm, interview_time: e.target.value})}
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Projects */}
-                    <div>
-                      <h3 className="text-lg font-medium mb-4">Candidate Projects</h3>
                       <div>
-                        <label className="text-sm font-medium">Projects</label>
-                        <textarea 
-                          placeholder="E-commerce platform, Mobile app, API development..."
-                          className="w-full mt-1 p-2 border border-input rounded-md bg-background h-20 resize-none"
-                          value={inviteForm.candidate_projects}
-                          onChange={(e) => setInviteForm({...inviteForm, candidate_projects: e.target.value})}
+                        <label className="text-sm font-medium">Candidate Email *</label>
+                        <Input
+                          placeholder="candidate@email.com"
+                          className="mt-1"
+                          value={inviteForm.candidate_email}
+                          onChange={(e) => setInviteForm({ ...inviteForm, candidate_email: e.target.value })}
                         />
                       </div>
                     </div>
+                  </div>
 
-                    {/* Profile Summary Generation */}
+                  {/* Job Information */}
+                  <div>
+                    <h3 className="text-lg font-medium mb-4">Job Information</h3>
                     <div>
-                      <h3 className="text-lg font-medium mb-4">Profile Summary</h3>
-                      <div className="space-y-4">
-                        <div className="flex gap-3">
-                          <Button
-                            onClick={() => generateCombinedSummary(inviteForm, uploadedFile)}
-                            disabled={isGeneratingSummary || !inviteForm.candidate_name || !inviteForm.candidate_email || !uploadedFile}
-                            className="flex-1 gap-2"
-                          >
-                            {isGeneratingSummary ? (
-                              <>
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                                Generating Combined Summary...
-                              </>
-                            ) : (
-                              <>
-                                <Sparkles className="h-4 w-4" />
-                                Generate Combined Summary
-                              </>
-                            )}
-                          </Button>
-                        </div>
-                        
-                        {!uploadedFile && (
-                          <p className="text-sm text-amber-600 bg-amber-50 p-2 rounded">
-                            ⚠️ Please upload a PDF resume to generate the summary
-                          </p>
-                        )}
-                        
-                        {uploadedFile && (
-                          <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                            <p className="text-sm text-green-800">
-                              ✓ PDF uploaded: <span className="font-medium">{uploadedFile.name}</span>
-                            </p>
-                            <p className="text-xs text-green-600 mt-1">
-                              Ready to generate combined summary with profile + PDF content
-                            </p>
-                          </div>
-                        )}
+                      <label className="text-sm font-medium">Job Posting *</label>
+                      <select
+                        className="w-full mt-1 p-2 border border-input rounded-md bg-background"
+                        value={inviteForm.job_id}
+                        onChange={(e) => setInviteForm({ ...inviteForm, job_id: e.target.value })}
+                      >
+                        <option value="">Select a job position</option>
+                        {jobPostings.map(job => (
+                          <option key={job.id} value={job.id}>
+                            {job.job_title} - {job.department}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
 
-                        {/* PDF Upload */}
-                        <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
-                          <Upload className="h-8 w-8 mx-auto mb-2 text-gray-400" />
-                          <p className="text-sm text-gray-600 mb-2">
-                            <span className="font-medium text-red-600">*Required:</span> Upload candidate's resume PDF
-                          </p>
-                          <input
-                            type="file"
-                            accept=".pdf"
-                            onChange={handleFileUpload}
-                            className="hidden"
-                            id="pdf-upload"
-                          />
-                          <label
-                            htmlFor="pdf-upload"
-                            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 cursor-pointer"
-                          >
-                            <FileText className="h-4 w-4 mr-2" />
-                            Choose PDF File
-                          </label>
-                          {uploadedFile && (
-                            <p className="text-xs text-green-600 mt-2">
-                              ✓ {uploadedFile.name} uploaded successfully
-                            </p>
-                          )}
-                        </div>
-
-                        {/* Generated Summary Display */}
-                        {generatedSummary && (
-                          <div className="bg-gray-50 border rounded-lg p-4">
-                            <div className="flex items-center justify-between mb-2">
-                              <h4 className="font-medium">Generated Combined Summary</h4>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setGeneratedSummary('')}
-                              >
-                                <X className="h-4 w-4" />
-                              </Button>
-                            </div>
-                            <p className="text-xs text-gray-500 mb-2">
-                              ✓ Generated from profile details + PDF resume analysis
-                            </p>
-                            <div className="text-sm text-gray-700 whitespace-pre-wrap max-h-60 overflow-y-auto">
-                              {generatedSummary}
-                            </div>
-                          </div>
-                        )}
+                  {/* Skills and Experience */}
+                  <div>
+                    <h3 className="text-lg font-medium mb-4">Skills & Experience</h3>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="text-sm font-medium">Candidate Skills</label>
+                        <Input
+                          placeholder="React, JavaScript, Node.js, Python..."
+                          className="mt-1"
+                          value={inviteForm.candidate_skills}
+                          onChange={(e) => setInviteForm({ ...inviteForm, candidate_skills: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium">Experience</label>
+                        <Input
+                          placeholder="5 years in software development..."
+                          className="mt-1"
+                          value={inviteForm.experience}
+                          onChange={(e) => setInviteForm({ ...inviteForm, experience: e.target.value })}
+                        />
                       </div>
                     </div>
                   </div>
-                </div>
 
-                {/* Footer */}
-                <div className="border-t px-6 py-4">
-                  <div className="flex gap-3">
-                    <Button
-                      onClick={handleInviteCandidate}
-                      disabled={inviteLoading || !inviteForm.candidate_email || !inviteForm.job_id}
-                      className="flex-1 gap-2 bg-[#e30d0d] hover:bg-[#c50c0c] text-white"
-                    >
-                      {inviteLoading ? (
-                        <>
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Sending Invite...
-                        </>
-                      ) : (
-                        <>
-                          <Send className="h-4 w-4" />
-                          Invite Candidate
-                        </>
-                      )}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => setIsSideDrawerOpen(false)}
-                      disabled={inviteLoading}
-                    >
-                      Cancel
-                    </Button>
+                  {/* Interview Schedule */}
+                  <div>
+                    <h3 className="text-lg font-medium mb-4">Interview Schedule</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-sm font-medium">Interview Date</label>
+                        <Input
+                          type="date"
+                          className="mt-1"
+                          value={inviteForm.interview_date}
+                          onChange={(e) => setInviteForm({ ...inviteForm, interview_date: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label className="text-sm font-medium">Interview Time</label>
+                        <Input
+                          type="time"
+                          className="mt-1"
+                          value={inviteForm.interview_time}
+                          onChange={(e) => setInviteForm({ ...inviteForm, interview_time: e.target.value })}
+                        />
+                      </div>
+                    </div>
                   </div>
+
+                  {/* Projects */}
+                  <div>
+                    <h3 className="text-lg font-medium mb-4">Candidate Projects</h3>
+                    <div>
+                      <label className="text-sm font-medium">Projects</label>
+                      <textarea
+                        placeholder="E-commerce platform, Mobile app, API development..."
+                        className="w-full mt-1 p-2 border border-input rounded-md bg-background h-20 resize-none"
+                        value={inviteForm.candidate_projects}
+                        onChange={(e) => setInviteForm({ ...inviteForm, candidate_projects: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Profile Summary Generation */}
+                  <div>
+                    <h3 className="text-lg font-medium mb-4">Profile Summary</h3>
+                    <div className="space-y-4">
+                      <div className="flex gap-3">
+                        <Button
+                          onClick={() => generateCombinedSummary(inviteForm, uploadedFile)}
+                          disabled={isGeneratingSummary || !inviteForm.candidate_name || !inviteForm.candidate_email || !uploadedFile}
+                          className="flex-1 gap-2"
+                        >
+                          {isGeneratingSummary ? (
+                            <>
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Generating Combined Summary...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-4 w-4" />
+                              Generate Combined Summary
+                            </>
+                          )}
+                        </Button>
+                      </div>
+
+                      {!uploadedFile && (
+                        <p className="text-sm text-amber-600 bg-amber-50 p-2 rounded">
+                          ⚠️ Please upload a PDF resume to generate the summary
+                        </p>
+                      )}
+
+                      {uploadedFile && (
+                        <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                          <p className="text-sm text-green-800">
+                            ✓ PDF uploaded: <span className="font-medium">{uploadedFile.name}</span>
+                          </p>
+                          <p className="text-xs text-green-600 mt-1">
+                            Ready to generate combined summary with profile + PDF content
+                          </p>
+                        </div>
+                      )}
+
+                      {/* PDF Upload */}
+                      <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+                        <Upload className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+                        <p className="text-sm text-gray-600 mb-2">
+                          <span className="font-medium text-red-600">*Required:</span> Upload candidate's resume PDF
+                        </p>
+                        <input
+                          type="file"
+                          accept=".pdf"
+                          onChange={handleFileUpload}
+                          className="hidden"
+                          id="pdf-upload"
+                        />
+                        <label
+                          htmlFor="pdf-upload"
+                          className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 cursor-pointer"
+                        >
+                          <FileText className="h-4 w-4 mr-2" />
+                          Choose PDF File
+                        </label>
+                        {uploadedFile && (
+                          <p className="text-xs text-green-600 mt-2">
+                            ✓ {uploadedFile.name} uploaded successfully
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Generated Summary Display */}
+                      {generatedSummary && (
+                        <div className="bg-gray-50 border rounded-lg p-4">
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="font-medium">Generated Combined Summary</h4>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setGeneratedSummary('')}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          <p className="text-xs text-gray-500 mb-2">
+                            ✓ Generated from profile details + PDF resume analysis
+                          </p>
+                          <div className="text-sm text-gray-700 whitespace-pre-wrap max-h-60 overflow-y-auto">
+                            {generatedSummary}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="border-t px-6 py-4">
+                <div className="flex gap-3">
+                  <Button
+                    onClick={handleInviteCandidate}
+                    disabled={inviteLoading || !inviteForm.candidate_email || !inviteForm.job_id}
+                    className="flex-1 gap-2 bg-[#e30d0d] hover:bg-[#c50c0c] text-white"
+                  >
+                    {inviteLoading ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Sending Invite...
+                      </>
+                    ) : (
+                      <>
+                        <Send className="h-4 w-4" />
+                        Invite Candidate
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsSideDrawerOpen(false)}
+                    disabled={inviteLoading}
+                  >
+                    Cancel
+                  </Button>
                 </div>
               </div>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* View-only dialog */}
-        <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
+      {/* View-only dialog */}
+      <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
         <DialogContent className="max-w-2xl overflow-hidden">
-            <DialogHeader>
-              <DialogTitle>Invitation Details</DialogTitle>
-              <DialogDescription>Read-only view of candidate and summary</DialogDescription>
-            </DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Invitation Details</DialogTitle>
+            <DialogDescription>Read-only view of candidate and summary</DialogDescription>
+          </DialogHeader>
           {viewRecord && (
             <ScrollArea className="max-h-[70vh] pr-4">
               <div className="space-y-4">
@@ -2026,8 +2025,8 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
               </div>
             </ScrollArea>
           )}
-          </DialogContent>
-        </Dialog>
+        </DialogContent>
+      </Dialog>
       {/* Delete confirmation dialog */}
       <Dialog
         open={isDeleteDialogOpen}
@@ -2038,7 +2037,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
           }
         }}
       >
-            <DialogContent className="max-w-md max-h-[70vh] overflow-y-auto">
+        <DialogContent className="max-w-md max-h-[70vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-red-600">
               <AlertCircle className="h-5 w-5" />
@@ -2095,7 +2094,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
               Complete conversation transcript between AI Agent and Candidate
             </DialogDescription>
           </DialogHeader>
-          
+
           {loadingTranscript ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -2144,24 +2143,22 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
                     transcriptData.transcript.map((message: any, index: number) => {
                       const isAgent = message.speaker === 'agent' || message.speaker === 'system';
                       const isCandidate = message.speaker === 'candidate';
-                      
+
                       return (
                         <div
                           key={index}
-                          className={`rounded-lg p-4 ${
-                            isAgent
+                          className={`rounded-lg p-4 ${isAgent
                               ? 'bg-blue-50 border border-blue-200'
                               : isCandidate
-                              ? 'bg-green-50 border border-green-200'
-                              : 'bg-gray-50 border border-gray-200'
-                          }`}
+                                ? 'bg-green-50 border border-green-200'
+                                : 'bg-gray-50 border border-gray-200'
+                            }`}
                         >
                           <div className="flex items-start justify-between mb-2">
                             <div className="flex items-center gap-2">
                               <div
-                                className={`w-2 h-2 rounded-full ${
-                                  isAgent ? 'bg-blue-500' : isCandidate ? 'bg-green-500' : 'bg-gray-500'
-                                }`}
+                                className={`w-2 h-2 rounded-full ${isAgent ? 'bg-blue-500' : isCandidate ? 'bg-green-500' : 'bg-gray-500'
+                                  }`}
                               />
                               <span className="font-semibold text-sm">
                                 {isAgent ? '🤖 AI Agent' : isCandidate ? '👤 Candidate' : 'System'}
@@ -2197,7 +2194,7 @@ export function InterviewManagement({ user, globalRefreshKey }: InterviewManagem
               </p>
             </div>
           )}
-          
+
           <div className="flex justify-end pt-4 border-t">
             <Button variant="outline" onClick={() => setIsTranscriptDialogOpen(false)}>
               Close

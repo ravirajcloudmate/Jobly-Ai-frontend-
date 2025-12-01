@@ -33,13 +33,33 @@ export default function InterviewRoomPage() {
   const [invitation, setInvitation] = useState<any>(null);
   const [jobPosting, setJobPosting] = useState<any>(null);
   const [promptTemplate, setPromptTemplate] = useState<any>(null);
+  const [isMounted, setIsMounted] = useState(false);
+  const roomKeyRef = useRef<string>('');
+
+  useEffect(() => {
+    setIsMounted(true);
+    return () => {
+      setIsMounted(false);
+    };
+  }, []);
 
   useEffect(() => {
     if (roomId) {
       loadInvitationData();
-      joinRoom();
     }
   }, [roomId]);
+
+  // Join room after invitation data is loaded
+  useEffect(() => {
+    if (roomId && invitation && jobPosting) {
+      // Wait a moment for candidate details to be sent, then join room
+      const timer = setTimeout(() => {
+        joinRoom();
+      }, 1500); // Give time for candidate details to be sent first
+      
+      return () => clearTimeout(timer);
+    }
+  }, [roomId, invitation, jobPosting]);
 
   // Load invitation and job data
   const loadInvitationData = async () => {
@@ -188,34 +208,72 @@ export default function InterviewRoomPage() {
       // Generate candidate identity
       const candidateIdentity = `candidate_${Date.now()}`;
       
+      // Prepare candidate details if available (as backup, even though we send via /agent/candidate-details)
+      const candidateDetails = invitation ? {
+        candidateName: invitation.candidate_name || invitation.candidate_email?.split('@')[0] || 'Candidate',
+        candidateEmail: invitation.candidate_email || '',
+        jobTitle: jobPosting?.job_title || '',
+        candidateSkills: invitation.candidate_skills || '',
+        experience: invitation.experience || '',
+        candidateProjects: invitation.candidate_projects || ''
+      } : undefined;
+      
+      // Prepare request body
+      const requestBody: any = {
+        room: roomId,
+        identity: candidateIdentity,
+        metadata: JSON.stringify({
+          sessionId: roomId,
+          role: 'candidate',
+          joinedAt: new Date().toISOString()
+        })
+      };
+      
+      // Include candidateDetails if available (backend accepts this as alternative to /agent/candidate-details)
+      if (candidateDetails) {
+        requestBody.candidateDetails = candidateDetails;
+      }
+      
+      console.log('🎫 Requesting token for room:', roomId);
+      console.log('📋 Candidate details included:', !!candidateDetails);
+      
       // Get token from backend
       const response = await fetch(`${BACKEND_URL}/token`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-          room: roomId,
-          identity: candidateIdentity,
-          metadata: JSON.stringify({
-            sessionId: roomId,
-            role: 'candidate',
-            joinedAt: new Date().toISOString()
-          })
-        })
+          body: JSON.stringify(requestBody)
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to get room token');
+        let errorMessage = 'Failed to get room token';
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData.detail || errorData.error || errorData.message || errorMessage;
+          console.error('❌ Token error:', errorMessage);
+        } catch (parseError) {
+          const errorText = await response.text().catch(() => '');
+          errorMessage = errorText || errorMessage;
+          console.error('❌ Token error (text):', errorText);
+        }
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
+      
+      if (!data.token || !data.url) {
+        throw new Error('Invalid token response: missing token or URL');
+      }
       
       setToken(data.token);
       setServerUrl(data.url);
       setIdentity(candidateIdentity);
       setLoading(false);
+      
+      // Generate a unique key for the room to force proper remounting
+      roomKeyRef.current = `${roomId}-${Date.now()}`;
 
       console.log('✅ Joined room:', roomId);
+      console.log('✅ Token received successfully');
 
     } catch (err: any) {
       console.error('❌ Error joining room:', err);
@@ -257,35 +315,47 @@ export default function InterviewRoomPage() {
     );
   }
 
+  // Only render LiveKitRoom if we have both token and serverUrl, and component is mounted
+  const shouldRenderRoom = isMounted && token && serverUrl;
+
   return (
     <div className="min-h-screen bg-slate-950 text-white">
-      {token && serverUrl ? (
+      {shouldRenderRoom ? (
       <LiveKitRoom
+        key={roomKeyRef.current || roomId}
         token={token}
-          serverUrl={serverUrl}
-          connect={true}
-          audio={true}
-          video={true}
-          onDisconnected={handleDisconnect}
-          className="h-full"
-        >
-          <MeetingLayout
-            roomId={roomId}
-            invitation={invitation}
-            jobPosting={jobPosting}
-            promptTemplate={promptTemplate}
-            onLeave={handleDisconnect}
-            onSaveTranscript={(transcriptData) => {
-              // This will be called when transcript needs to be saved
-              return fetch('/api/interview-transcript', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(transcriptData)
-              });
-            }}
-          />
-          <RoomAudioRenderer />
-        </LiveKitRoom>
+        serverUrl={serverUrl}
+        connect={true}
+        audio={true}
+        video={true}
+        onDisconnected={(reason) => {
+          console.log('🔌 Disconnected from room:', reason);
+          // Delay navigation to allow cleanup
+          setTimeout(() => {
+            if (isMounted) {
+              handleDisconnect();
+            }
+          }, 100);
+        }}
+        className="h-full"
+      >
+        <MeetingLayout
+          roomId={roomId}
+          invitation={invitation}
+          jobPosting={jobPosting}
+          promptTemplate={promptTemplate}
+          onLeave={handleDisconnect}
+          onSaveTranscript={(transcriptData) => {
+            // This will be called when transcript needs to be saved
+            return fetch('/api/interview-transcript', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(transcriptData)
+            });
+          }}
+        />
+        <RoomAudioRenderer />
+      </LiveKitRoom>
       ) : (
         <div className="flex items-center justify-center min-h-screen">
           <div className="text-center">
@@ -416,11 +486,19 @@ function MeetingLayout({ roomId, invitation, jobPosting, promptTemplate, onLeave
 
   useEffect(() => {
     return () => {
-      currentAudioRef.current?.pause();
-      currentAudioRef.current = null;
-      audioQueueRef.current = [];
-      if (typeof window !== 'undefined' && window.speechSynthesis) {
-        window.speechSynthesis.cancel();
+      // Safely cleanup audio
+      try {
+        if (currentAudioRef.current) {
+          currentAudioRef.current.pause();
+          currentAudioRef.current = null;
+        }
+        audioQueueRef.current = [];
+        if (typeof window !== 'undefined' && window.speechSynthesis) {
+          window.speechSynthesis.cancel();
+        }
+      } catch (error) {
+        // Ignore cleanup errors during unmount
+        console.warn('Audio cleanup warning:', error);
       }
     };
   }, []);
@@ -687,11 +765,26 @@ function MeetingLayout({ roomId, invitation, jobPosting, promptTemplate, onLeave
   // Save transcript and performance report when component unmounts or interview ends
   useEffect(() => {
     return () => {
-      if (!transcriptSavedRef.current && transcript.length > 0) {
-        saveTranscript();
-      }
-      if (!performanceSavedRef.current && invitation?.id) {
-        savePerformanceReport();
+      // Use a flag to prevent multiple saves during cleanup
+      let isCleaningUp = false;
+      if (isCleaningUp) return;
+      isCleaningUp = true;
+      
+      try {
+        if (!transcriptSavedRef.current && transcript.length > 0) {
+          // Use setTimeout to ensure this doesn't block unmounting
+          setTimeout(() => {
+            saveTranscript().catch(err => console.warn('Transcript save error during cleanup:', err));
+          }, 0);
+        }
+        if (!performanceSavedRef.current && invitation?.id) {
+          setTimeout(() => {
+            savePerformanceReport().catch(err => console.warn('Performance report save error during cleanup:', err));
+          }, 0);
+        }
+      } catch (error) {
+        // Ignore errors during cleanup
+        console.warn('Cleanup warning:', error);
       }
     };
   }, [saveTranscript, savePerformanceReport, transcript.length, invitation?.id]);

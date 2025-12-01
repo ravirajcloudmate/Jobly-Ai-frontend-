@@ -1,32 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createAdminClient } from '@/lib/supabase-server';
 
 /**
  * POST endpoint to save interview transcript
+ * Based on guide: saves transcript metadata and individual messages separately
  */
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const payload = await request.json();
     
     const {
       invitation_id,
       room_id,
-      company_id,
-      job_id,
       transcript,
       started_at,
       ended_at,
       candidate_email,
-      candidate_name
-    } = body;
+      candidate_name,
+      company_id,
+      job_id
+    } = payload;
 
     // Validate required fields
     if (!invitation_id || !room_id || !transcript || !Array.isArray(transcript)) {
       return NextResponse.json(
-        { 
-          error: 'Missing required fields',
-          required: ['invitation_id', 'room_id', 'transcript']
-        },
+        { success: false, message: 'Missing required fields' },
+        { status: 400 }
+      );
+    }
+
+    // Validate transcript is not empty
+    if (transcript.length === 0) {
+      return NextResponse.json(
+        { success: false, message: 'No messages in transcript' },
         { status: 400 }
       );
     }
@@ -36,87 +42,103 @@ export async function POST(request: NextRequest) {
     console.log('👤 Candidate:', candidate_name || candidate_email);
     console.log('📝 Messages:', transcript.length);
 
-    // Calculate duration if both timestamps are provided
-    let duration_seconds = null;
-    if (started_at && ended_at) {
-      const start = new Date(started_at);
-      const end = new Date(ended_at);
-      duration_seconds = Math.floor((end.getTime() - start.getTime()) / 1000);
-    }
+    // Use admin client for backend API calls (bypasses RLS)
+    const supabase = createAdminClient();
 
-    // Check if transcript already exists for this invitation
-    const { data: existingTranscript } = await supabase
+    // 1. Upsert interview transcript record
+    const { data: transcriptRecord, error: transcriptError } = await supabase
       .from('interview_transcripts')
-      .select('id')
-      .eq('invitation_id', invitation_id)
-      .maybeSingle();
+      .upsert({
+        invitation_id,
+        room_id,
+        candidate_email,
+        candidate_name,
+        company_id: company_id || null,
+        job_id: job_id || null,
+        started_at,
+        ended_at,
+        updated_at: new Date().toISOString()
+      }, {
+        onConflict: 'invitation_id',
+        ignoreDuplicates: false
+      })
+      .select()
+      .single();
 
-    let result;
-    if (existingTranscript) {
-      // Update existing transcript
-      const { data, error } = await supabase
-        .from('interview_transcripts')
-        .update({
-          transcript,
-          ended_at: ended_at || new Date().toISOString(),
-          duration_seconds,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', existingTranscript.id)
-        .select()
-        .single();
-
-      if (error) throw error;
-      result = data;
-      console.log('✅ Transcript updated');
-    } else {
-      // Create new transcript
-      const { data, error } = await supabase
-        .from('interview_transcripts')
-        .insert({
-          invitation_id,
-          room_id,
-          company_id,
-          job_id,
-          transcript,
-          started_at: started_at || new Date().toISOString(),
-          ended_at: ended_at || new Date().toISOString(),
-          duration_seconds,
-          candidate_email,
-          candidate_name
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-      result = data;
-      console.log('✅ Transcript saved');
+    if (transcriptError) {
+      console.error('Error saving transcript record:', transcriptError);
+      return NextResponse.json(
+        { 
+          success: false, 
+          message: 'Failed to save transcript record', 
+          error: transcriptError.message 
+        },
+        { status: 500 }
+      );
     }
 
-    // Update invitation status to completed if transcript exists
-    if (result && !ended_at) {
-      await supabase
-        .from('interview_invitations')
-        .update({
-          status: 'completed',
-          interview_completed_at: new Date().toISOString()
-        })
-        .eq('id', invitation_id);
+    const transcriptId = transcriptRecord.id;
+
+    // 2. Delete old messages for this transcript (if updating)
+    const { error: deleteError } = await supabase
+      .from('interview_messages')
+      .delete()
+      .eq('transcript_id', transcriptId);
+
+    if (deleteError) {
+      console.error('Error deleting old messages:', deleteError);
+      // Continue anyway, might be first time saving
     }
+
+    // 3. Insert all messages
+    const messages = transcript.map(msg => ({
+      transcript_id: transcriptId,
+      speaker: msg.speaker,
+      text: msg.text,
+      timestamp: msg.timestamp,
+      created_at: new Date().toISOString()
+    }));
+
+    const { error: messagesError } = await supabase
+      .from('interview_messages')
+      .insert(messages);
+
+    if (messagesError) {
+      console.error('Error saving messages:', messagesError);
+      return NextResponse.json(
+        { 
+          success: false, 
+          message: 'Failed to save messages', 
+          error: messagesError.message 
+        },
+        { status: 500 }
+      );
+    }
+
+    console.log('✅ Transcript saved successfully');
+
+    // Update invitation status to completed
+    await supabase
+      .from('interview_invitations')
+      .update({
+        status: 'completed',
+        interview_completed_at: new Date().toISOString()
+      })
+      .eq('id', invitation_id);
 
     return NextResponse.json({
       success: true,
       message: 'Transcript saved successfully',
-      transcript: result
+      transcript_id: transcriptId
     });
 
   } catch (error: any) {
-    console.error('❌ Error saving transcript:', error);
+    console.error('❌ Error in interview-transcript API:', error);
     return NextResponse.json(
-      {
-        success: false,
-        error: 'Failed to save transcript',
-        details: error.message
+      { 
+        success: false, 
+        message: 'Internal server error', 
+        error: error.message 
       },
       { status: 500 }
     );
@@ -124,7 +146,7 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * GET endpoint to retrieve interview transcript
+ * GET endpoint to retrieve interview transcript with messages
  */
 export async function GET(request: NextRequest) {
   try {
@@ -134,11 +156,15 @@ export async function GET(request: NextRequest) {
 
     if (!invitation_id && !room_id) {
       return NextResponse.json(
-        { error: 'Either invitation_id or room_id is required' },
+        { success: false, message: 'Either invitation_id or room_id is required' },
         { status: 400 }
       );
     }
 
+    // Use admin client for backend API calls (bypasses RLS)
+    const supabase = createAdminClient();
+
+    // Get transcript record
     let query = supabase
       .from('interview_transcripts')
       .select('*');
@@ -149,20 +175,55 @@ export async function GET(request: NextRequest) {
       query = query.eq('room_id', room_id);
     }
 
-    const { data, error } = await query.maybeSingle();
+    const { data: transcriptData, error: transcriptError } = await query.maybeSingle();
 
-    if (error) throw error;
+    if (transcriptError) throw transcriptError;
 
-    if (!data) {
+    if (!transcriptData) {
       return NextResponse.json(
-        { error: 'Transcript not found' },
+        { success: false, message: 'Transcript not found' },
         { status: 404 }
       );
     }
 
+    // Get messages for this transcript from new interview_messages table
+    const { data: messages, error: messagesError } = await supabase
+      .from('interview_messages')
+      .select('speaker, text, timestamp')
+      .eq('transcript_id', transcriptData.id)
+      .order('timestamp', { ascending: true });
+
+    let finalMessages: any[] = [];
+
+    if (messagesError) {
+      console.error('Error retrieving messages from interview_messages table:', messagesError);
+    } else if (messages && messages.length > 0) {
+      // Use messages from new table
+      finalMessages = messages;
+    } else {
+      // Fallback to old JSONB transcript column for backward compatibility
+      if (transcriptData.transcript && Array.isArray(transcriptData.transcript)) {
+        console.log('Using legacy transcript data from JSONB column');
+        finalMessages = transcriptData.transcript;
+      }
+    }
+
+    // Calculate duration if not set
+    let duration_seconds = transcriptData.duration_seconds;
+    if (!duration_seconds && transcriptData.started_at && transcriptData.ended_at) {
+      const start = new Date(transcriptData.started_at);
+      const end = new Date(transcriptData.ended_at);
+      duration_seconds = Math.floor((end.getTime() - start.getTime()) / 1000);
+    }
+
+    // Format response to match expected structure
     return NextResponse.json({
       success: true,
-      transcript: data
+      transcript: {
+        ...transcriptData,
+        transcript: finalMessages,
+        duration_seconds: duration_seconds || null
+      }
     });
 
   } catch (error: any) {
@@ -170,7 +231,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        error: 'Failed to retrieve transcript',
+        message: 'Failed to retrieve transcript',
         details: error.message
       },
       { status: 500 }

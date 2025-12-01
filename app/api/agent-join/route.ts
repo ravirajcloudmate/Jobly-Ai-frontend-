@@ -136,7 +136,57 @@ export async function POST(req: NextRequest) {
         positive_feedback: [],
         neutral_feedback: [],
         error_messages: {}
-      }
+      },
+      
+      // Complete Job Posting Template (full job posting object)
+      jobPostingTemplate: job ? {
+        id: job.id,
+        company_id: job.company_id,
+        created_by: job.created_by,
+        job_title: job.job_title,
+        department: job.department,
+        job_description: job.job_description,
+        ai_interview_template: job.ai_interview_template,
+        interview_mode: job.interview_mode,
+        interview_language: job.interview_language,
+        employment_type: job.employment_type,
+        experience_level: job.experience_level,
+        location: job.location,
+        salary_min: job.salary_min,
+        salary_max: job.salary_max,
+        currency: job.currency,
+        status: job.status,
+        is_remote: job.is_remote,
+        applications_count: job.applications_count,
+        interview_duration: job.interview_duration,
+        questions_count: job.questions_count,
+        difficulty_level: job.difficulty_level,
+        created_at: job.created_at,
+        updated_at: job.updated_at,
+        published_at: job.published_at,
+        expires_at: job.expires_at
+      } : null,
+      
+      // Complete Agent Template (full prompt template object)
+      agentTemplate: promptTemplate ? {
+        id: promptTemplate.id,
+        company_id: promptTemplate.company_id,
+        created_by: promptTemplate.created_by,
+        name: promptTemplate.name,
+        target_role: promptTemplate.target_role,
+        description: promptTemplate.description,
+        assessment: promptTemplate.assessment,
+        category: promptTemplate.category,
+        level: promptTemplate.level,
+        duration_minutes: promptTemplate.duration_minutes,
+        position: promptTemplate.position,
+        prompt_text: promptTemplate.prompt_text,
+        usage_count: promptTemplate.usage_count,
+        rating: promptTemplate.rating,
+        is_active: promptTemplate.is_active,
+        created_at: promptTemplate.created_at,
+        updated_at: promptTemplate.updated_at
+      } : null
     };
 
     console.log('📋 Agent join data:', agentData);

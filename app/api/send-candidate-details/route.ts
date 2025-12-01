@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { supabase } from '@/lib/supabase';
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8001';
 
@@ -46,6 +47,66 @@ export async function POST(request: NextRequest) {
     console.log('📍 Room:', roomName);
     console.log('👤 Candidate:', candidateName || candidateEmail);
 
+    // Fetch complete job posting template if jobId is provided
+    let jobPostingTemplate = null;
+    if (jobId) {
+      try {
+        const { data: jobData, error: jobError } = await supabase
+          .from('job_postings')
+          .select('*')
+          .eq('id', jobId)
+          .single();
+        
+        if (!jobError && jobData) {
+          jobPostingTemplate = jobData;
+          console.log('✅ Job posting template fetched');
+        } else {
+          console.warn('⚠️ Could not fetch job posting template:', jobError?.message);
+        }
+      } catch (err) {
+        console.warn('⚠️ Error fetching job posting template:', err);
+      }
+    }
+
+    // Fetch complete agent template if agentId is provided
+    let agentTemplate = null;
+    if (agentId) {
+      try {
+        const { data: agentData, error: agentError } = await supabase
+          .from('prompt_templates')
+          .select('*')
+          .eq('id', agentId)
+          .single();
+        
+        if (!agentError && agentData) {
+          agentTemplate = agentData;
+          console.log('✅ Agent template fetched');
+        } else {
+          console.warn('⚠️ Could not fetch agent template:', agentError?.message);
+        }
+      } catch (err) {
+        console.warn('⚠️ Error fetching agent template:', err);
+      }
+    }
+
+    // If agentId not provided but jobId has ai_interview_template, fetch that
+    if (!agentTemplate && jobPostingTemplate?.ai_interview_template) {
+      try {
+        const { data: agentData, error: agentError } = await supabase
+          .from('prompt_templates')
+          .select('*')
+          .eq('id', jobPostingTemplate.ai_interview_template)
+          .single();
+        
+        if (!agentError && agentData) {
+          agentTemplate = agentData;
+          console.log('✅ Agent template fetched from job posting');
+        }
+      } catch (err) {
+        console.warn('⚠️ Error fetching agent template from job posting:', err);
+      }
+    }
+
     // Prepare comprehensive candidate data for backend agent
     const candidateData = {
       // Room and session info
@@ -84,6 +145,12 @@ export async function POST(request: NextRequest) {
         agentId: agentId || 'default-agent',
         agentPrompt: agentPrompt || `Conduct a professional interview for ${candidateName || 'the candidate'} applying for ${jobTitle || 'the position'}.`
       },
+      
+      // Complete Job Posting Template (full job posting object)
+      jobPostingTemplate: jobPostingTemplate,
+      
+      // Complete Agent Template (full prompt template object)
+      agentTemplate: agentTemplate,
       
       // Metadata
       metadata: {

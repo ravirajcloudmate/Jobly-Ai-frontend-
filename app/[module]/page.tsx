@@ -106,6 +106,16 @@ export function ModuleContent({ module }: { module: string }) {
     }
   };
 
+  // Load logo from localStorage on mount for immediate favicon update
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const storedLogo = localStorage.getItem('branding_company_logo');
+      if (storedLogo && !brandingLogoUrl) {
+        setBrandingLogoUrl(storedLogo);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     if (user && !userProfile) {
       loadUserProfile();
@@ -134,7 +144,21 @@ export function ModuleContent({ module }: { module: string }) {
             .select('logo_url')
             .eq('company_id', data.company_id)
             .maybeSingle();
-          setBrandingLogoUrl(branding?.logo_url || undefined);
+          const logoUrl = branding?.logo_url || undefined;
+          setBrandingLogoUrl(logoUrl);
+          
+          // Sync logo to localStorage for favicon
+          if (typeof window !== 'undefined') {
+            if (logoUrl) {
+              localStorage.setItem('branding_company_logo', logoUrl);
+              // Dispatch event to update favicon
+              window.dispatchEvent(new CustomEvent('branding:updated', {
+                detail: { logoUrl }
+              }));
+            } else {
+              localStorage.removeItem('branding_company_logo');
+            }
+          }
         }
       } catch {}
     } catch {}

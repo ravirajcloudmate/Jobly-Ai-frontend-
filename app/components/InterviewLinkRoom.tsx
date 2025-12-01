@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { Video, Mic, MicOff, VideoOff, Phone, MessageSquare } from 'lucide-react';
+import { saveTranscript, startAutoSaveTranscript } from '@/lib/transcriptUtils';
+
 
 export default function InterviewLinkRoom() {
   const [sessionData, setSessionData] = useState<any>(null);
@@ -9,16 +11,18 @@ export default function InterviewLinkRoom() {
   const [messages, setMessages] = useState<{ speaker: string; text: string; timestamp: Date }[]>([]);
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
   const [currentQuestion, setCurrentQuestion] = useState('');
-  
+  const [interviewStartTime, setInterviewStartTime] = useState<string | null>(null);
+
   const candidateVideoRef = useRef<HTMLVideoElement | null>(null);
   const agentVideoRef = useRef<HTMLVideoElement | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const autoSaveCleanupRef = useRef<(() => void) | null>(null);
 
   // Get session ID from URL
-  const sessionId = typeof window !== 'undefined' 
-    ? new URLSearchParams(window.location.search).get('session') 
+  const sessionId = typeof window !== 'undefined'
+    ? new URLSearchParams(window.location.search).get('session')
     : null;
 
   useEffect(() => {
@@ -26,6 +30,32 @@ export default function InterviewLinkRoom() {
       initializeInterview();
     }
   }, [sessionId]);
+
+  // Cleanup effect: save transcript if component unmounts
+  useEffect(() => {
+    return () => {
+      // Stop auto-save on unmount
+      if (autoSaveCleanupRef.current) {
+        autoSaveCleanupRef.current();
+      }
+
+      // Save final transcript if interview was in progress
+      if (sessionData && messages.length > 0 && interviewStartTime) {
+        saveTranscript({
+          invitation_id: sessionData.invitation_id || sessionData.id,
+          room_id: sessionData.room_id,
+          company_id: sessionData.company_id,
+          job_id: sessionData.job_id,
+          transcript: messages,
+          started_at: interviewStartTime,
+          ended_at: new Date().toISOString(),
+          candidate_email: sessionData.candidate_email,
+          candidate_name: sessionData.candidate_name
+        });
+      }
+    };
+  }, [sessionData, messages, interviewStartTime]);
+
 
   const initializeInterview = async () => {
     try {
@@ -61,7 +91,7 @@ export default function InterviewLinkRoom() {
     ws.onopen = () => {
       console.log('Connected to interview server');
       setIsConnected(true);
-      
+
       // Send initial connection message
       ws.send(JSON.stringify({
         type: 'join',
@@ -93,29 +123,29 @@ export default function InterviewLinkRoom() {
         console.log('AI Agent joined the interview');
         startInterview();
         break;
-        
+
       case 'agent_question':
         // AI agent asked a question
         setCurrentQuestion(data.question);
         setIsAgentSpeaking(true);
         addMessage('agent', data.question);
-        
+
         // Play audio if provided
         if (data.audioUrl) {
           playAudio(data.audioUrl);
         }
         break;
-        
+
       case 'agent_listening':
         // Agent is waiting for response
         setIsAgentSpeaking(false);
         break;
-        
+
       case 'transcript':
         // Real-time transcript update
         addMessage(data.speaker, data.text);
         break;
-        
+
       case 'interview_complete':
         // Interview finished
         handleInterviewEnd(data);
@@ -131,7 +161,7 @@ export default function InterviewLinkRoom() {
       });
 
       localStreamRef.current = stream;
-      
+
       if (candidateVideoRef.current) {
         candidateVideoRef.current.srcObject = stream;
       }
@@ -154,7 +184,7 @@ export default function InterviewLinkRoom() {
     };
 
     const pc = new RTCPeerConnection(configuration);
-    
+
     // Add local stream tracks to peer connection
     stream.getTracks().forEach(track => {
       pc.addTrack(track, stream);
@@ -172,6 +202,27 @@ export default function InterviewLinkRoom() {
 
   const startInterview = () => {
     console.log('Interview started with AI Agent');
+
+    // Record interview start time
+    const startTime = new Date().toISOString();
+    setInterviewStartTime(startTime);
+
+    // Start auto-save for transcript (every 30 seconds)
+    if (sessionData) {
+      const cleanup = startAutoSaveTranscript(() => ({
+        invitation_id: sessionData.invitation_id || sessionData.id,
+        room_id: sessionData.room_id,
+        company_id: sessionData.company_id,
+        job_id: sessionData.job_id,
+        transcript: messages,
+        started_at: startTime,
+        candidate_email: sessionData.candidate_email,
+        candidate_name: sessionData.candidate_name
+      }), 30000);
+
+      autoSaveCleanupRef.current = cleanup;
+    }
+
     // Send ready signal to Python backend
     if (wsRef.current) {
       wsRef.current.send(JSON.stringify({
@@ -203,6 +254,27 @@ export default function InterviewLinkRoom() {
 
   const endInterview = async () => {
     if (confirm('Are you sure you want to end the interview?')) {
+      // Stop auto-save
+      if (autoSaveCleanupRef.current) {
+        autoSaveCleanupRef.current();
+        autoSaveCleanupRef.current = null;
+      }
+
+      // Save final transcript
+      if (sessionData && messages.length > 0) {
+        await saveTranscript({
+          invitation_id: sessionData.invitation_id || sessionData.id,
+          room_id: sessionData.room_id,
+          company_id: sessionData.company_id,
+          job_id: sessionData.job_id,
+          transcript: messages,
+          started_at: interviewStartTime || undefined,
+          ended_at: new Date().toISOString(),
+          candidate_email: sessionData.candidate_email,
+          candidate_name: sessionData.candidate_name
+        });
+      }
+
       // Notify backend
       if (wsRef.current) {
         wsRef.current.send(JSON.stringify({
@@ -238,7 +310,28 @@ export default function InterviewLinkRoom() {
     audio.play();
   };
 
-  const handleInterviewEnd = (data: any) => {
+  const handleInterviewEnd = async (data: any) => {
+    // Stop auto-save
+    if (autoSaveCleanupRef.current) {
+      autoSaveCleanupRef.current();
+      autoSaveCleanupRef.current = null;
+    }
+
+    // Save final transcript when interview ends from backend
+    if (sessionData && messages.length > 0) {
+      await saveTranscript({
+        invitation_id: sessionData.invitation_id || sessionData.id,
+        room_id: sessionData.room_id,
+        company_id: sessionData.company_id,
+        job_id: sessionData.job_id,
+        transcript: messages,
+        started_at: interviewStartTime || undefined,
+        ended_at: new Date().toISOString(),
+        candidate_email: sessionData.candidate_email,
+        candidate_name: sessionData.candidate_name
+      });
+    }
+
     alert('Interview completed! Thank you for your time.');
     window.location.href = `/interview/complete?session=${sessionId}`;
   };
@@ -337,14 +430,14 @@ export default function InterviewLinkRoom() {
           >
             {videoEnabled ? <Video className="h-6 w-6" /> : <VideoOff className="h-6 w-6" />}
           </button>
-          
+
           <button
             onClick={toggleAudio}
             className={`p-4 rounded-full ${audioEnabled ? 'bg-gray-700 hover:bg-gray-600' : 'bg-red-600 hover:bg-red-700'}`}
           >
             {audioEnabled ? <Mic className="h-6 w-6" /> : <MicOff className="h-6 w-6" />}
           </button>
-          
+
           <button
             onClick={endInterview}
             className="p-4 rounded-full bg-red-600 hover:bg-red-700"

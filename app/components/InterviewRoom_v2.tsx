@@ -263,6 +263,7 @@ export default function InterviewRoom({
   return (
     <div className="min-h-screen bg-gray-50">
       <LiveKitRoom
+        key={`room-v2-${roomName}-${Date.now()}`}
         token={token}
         serverUrl={liveKitUrl}
         connect={true}
@@ -276,6 +277,10 @@ export default function InterviewRoom({
         }}
         onDisconnected={(reason) => {
           console.log('🔴 Disconnected from interview:', reason);
+          // Delay cleanup to allow LiveKit to finish
+          setTimeout(() => {
+            // Cleanup handled by useEffect
+          }, 100);
         }}
         onError={(error) => {
           console.error('❌ Room error:', error);

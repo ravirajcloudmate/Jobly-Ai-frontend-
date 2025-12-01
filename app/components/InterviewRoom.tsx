@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import {
   LiveKitRoom,
   RoomAudioRenderer,
@@ -25,6 +25,7 @@ export default function InterviewRoom({ candidateId, jobId }: InterviewRoomProps
   const [error, setError] = useState('');
   const [mediaDevices, setMediaDevices] = useState<MediaDeviceInfo[]>([]);
   const [micPermission, setMicPermission] = useState<'granted' | 'denied' | 'prompt'>('prompt');
+  const roomKeyRef = useRef<string>('');
 
   // Check media devices
   useEffect(() => {
@@ -141,6 +142,9 @@ export default function InterviewRoom({ candidateId, jobId }: InterviewRoomProps
         setLiveKitUrl(data.url);
         setAgentStatus('waiting_for_agent');
         
+        // Generate stable key for the room
+        roomKeyRef.current = `room-${data.roomName || candidateId}-${Date.now()}`;
+        
         // Check if agent is already connected
         if (data.agentConnected) {
           setAgentConnected(true);
@@ -200,6 +204,7 @@ export default function InterviewRoom({ candidateId, jobId }: InterviewRoomProps
 
   return (
     <LiveKitRoom
+      key={roomKeyRef.current || `room-${candidateId}`}
       token={token}
       serverUrl={liveKitUrl}
       connect={true}
@@ -209,9 +214,12 @@ export default function InterviewRoom({ candidateId, jobId }: InterviewRoomProps
         console.log('Connected to interview room');
         setConnected(true);
       }}
-      onDisconnected={() => {
-        console.log('Disconnected from interview');
-        setConnected(false);
+      onDisconnected={(reason) => {
+        console.log('Disconnected from interview:', reason);
+        // Delay state updates to allow cleanup
+        setTimeout(() => {
+          setConnected(false);
+        }, 100);
       }}
     >
       <InterviewInterface 

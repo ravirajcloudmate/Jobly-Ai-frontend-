@@ -243,13 +243,20 @@ export default function InterviewRoomEnhanced({
   return (
     <div className={`${isFullscreen ? 'fixed inset-0 z-50' : 'min-h-screen'} bg-gradient-to-br from-slate-50 to-slate-100`}>
       <LiveKitRoom
+        key={`room-enhanced-${roomName}-${Date.now()}`}
         token={token}
         serverUrl={liveKitUrl}
         connect={true}
         audio={true}
         video={false}
         onConnected={() => setConnected(true)}
-        onDisconnected={() => setConnected(false)}
+        onDisconnected={(reason) => {
+          console.log('Disconnected:', reason);
+          // Delay state update to allow cleanup
+          setTimeout(() => {
+            setConnected(false);
+          }, 100);
+        }}
       >
         <InterviewInterface 
           candidateId={candidateId}
