@@ -315,41 +315,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } : null
       })
 
-      // Check if email confirmation is required
+      // Supabase automatically sends verification email if email confirmations are enabled
       if (data?.user && !data.user.email_confirmed_at) {
-        console.log('⚠️ Email confirmation required but email may not have been sent')
-        console.log('💡 Check Supabase dashboard: Authentication > Email Templates > Confirm signup')
-        console.log('💡 Check Supabase dashboard: Authentication > Settings > Email Auth > Enable email confirmations')
-        
-        // Send custom verification email
-        try {
-          console.log('📧 Sending custom verification email...')
-          const emailResponse = await fetch('/api/send-verification-email', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              email: email,
-              fullName: userData?.fullName || '',
-              companyName: userData?.companyName || '',
-              userId: data.user.id
-            })
-          })
-
-          const emailResult = await emailResponse.json()
-          if (emailResult.success) {
-            console.log('✅ Custom verification email sent successfully')
-            if (emailResult.previewUrl) {
-              console.log('📧 Preview URL:', emailResult.previewUrl)
-            }
-          } else {
-            console.error('❌ Failed to send custom verification email:', emailResult.error)
-          }
-        } catch (emailError) {
-          console.error('❌ Error sending custom verification email:', emailError)
-          // Don't fail the signup if email fails
-        }
+        console.log('✅ Account created. Supabase will send verification email automatically.')
+        console.log('💡 Note: Email verification is handled by Supabase Auth.')
+        console.log('💡 If email not received, check:')
+        console.log('   1. Spam/junk folder')
+        console.log('   2. Supabase Dashboard > Authentication > Settings > Enable email confirmations')
+        console.log('   3. Supabase Dashboard > Project Settings > Auth > SMTP Settings (configure SMTP for production)')
+        console.log('   4. Free tier limit: max 3 emails/hour')
+        console.log('   5. Check Supabase logs: Dashboard > Logs > Auth Logs')
       }
 
       return { data, error }
@@ -366,6 +341,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(true)
       console.log('📧 Resending email verification to:', email)
       
+      // First try Supabase built-in resend
       const { data, error } = await supabase.auth.resend({
         type: 'signup',
         email: email,
@@ -374,7 +350,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       })
 
-      console.log('📧 Resend response:', { data, error })
+      console.log('📧 Resend response:', { 
+        data: data ? 'Email sent' : 'No data',
+        error: error ? {
+          message: error.message,
+          status: error.status,
+          name: error.name
+        } : null
+      })
+
+      // If resend fails, log diagnostic info
+      if (error) {
+        console.error('❌ Supabase resend failed:', error)
+        console.log('💡 Troubleshooting:')
+        console.log('   1. Check Supabase Dashboard > Authentication > Settings > Enable email confirmations')
+        console.log('   2. Check Supabase Dashboard > Project Settings > Auth > SMTP Settings')
+        console.log('   3. Verify email is not in spam folder')
+        console.log('   4. Free tier limit: max 3 emails/hour')
+        console.log('   5. Check Supabase logs: Dashboard > Logs > Auth Logs')
+        
+        // Try diagnostic API
+        try {
+          const diagnosticResponse = await fetch('/api/test-email-sending', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+          })
+          const diagnostic = await diagnosticResponse.json()
+          console.log('🔍 Email diagnostic:', diagnostic)
+        } catch (diagError) {
+          console.warn('⚠️ Diagnostic check failed:', diagError)
+        }
+      }
 
       return { data, error }
     } catch (error) {

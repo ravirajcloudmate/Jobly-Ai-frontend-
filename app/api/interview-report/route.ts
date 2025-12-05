@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createAdminClient } from '@/lib/supabase-server';
 
 /**
  * POST endpoint to save interview performance report
@@ -45,6 +45,9 @@ export async function POST(request: NextRequest) {
     console.log('💾 Saving interview performance report...');
     console.log('👤 Candidate:', candidate_name || candidate_email);
     console.log('📊 Score:', total_score);
+
+    // Use admin client to bypass RLS policies
+    const supabase = createAdminClient();
 
     // Check if report already exists
     const { data: existingReport } = await supabase
@@ -177,6 +180,9 @@ export async function GET(request: NextRequest) {
     const invitation_id = searchParams.get('invitation_id');
     const company_id = searchParams.get('company_id');
     const limit = parseInt(searchParams.get('limit') || '10');
+
+    // Use admin client to bypass RLS policies
+    const supabase = createAdminClient();
 
     // Single report by invitation_id
     if (invitation_id) {

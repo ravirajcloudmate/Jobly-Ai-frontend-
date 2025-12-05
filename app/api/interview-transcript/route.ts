@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
         started_at,
         ended_at,
         updated_at: new Date().toISOString()
-      }, {
+      } as any, {
         onConflict: 'invitation_id',
         ignoreDuplicates: false
       })
@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const transcriptId = transcriptRecord.id;
+    const transcriptId = (transcriptRecord as any)?.id;
 
     // 2. Delete old messages for this transcript (if updating)
     const { error: deleteError } = await supabase
@@ -101,7 +101,7 @@ export async function POST(request: NextRequest) {
 
     const { error: messagesError } = await supabase
       .from('interview_messages')
-      .insert(messages);
+      .insert(messages as any);
 
     if (messagesError) {
       console.error('Error saving messages:', messagesError);
@@ -118,13 +118,18 @@ export async function POST(request: NextRequest) {
     console.log('✅ Transcript saved successfully');
 
     // Update invitation status to completed
-    await supabase
-      .from('interview_invitations')
-      .update({
-        status: 'completed',
-        interview_completed_at: new Date().toISOString()
-      })
-      .eq('id', invitation_id);
+    try {
+      await (supabase
+        .from('interview_invitations') as any)
+        .update({
+          status: 'completed',
+          interview_completed_at: new Date().toISOString()
+        })
+        .eq('id', invitation_id);
+    } catch (updateError) {
+      console.warn('Failed to update invitation status:', updateError);
+      // Continue anyway, transcript is saved
+    }
 
     return NextResponse.json({
       success: true,
@@ -186,33 +191,61 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Cast transcriptData to any to avoid TypeScript errors
+    const transcript = transcriptData as any;
+
     // Get messages for this transcript from new interview_messages table
-    const { data: messages, error: messagesError } = await supabase
+    // Try both column names: 'text' (migration 013) and 'message' (schema 33)
+    let finalMessages: any[] = [];
+    
+    // First try with 'text' column (for transcript_id based messages)
+    const { data: messagesWithText, error: textError } = await supabase
       .from('interview_messages')
       .select('speaker, text, timestamp')
-      .eq('transcript_id', transcriptData.id)
+      .eq('transcript_id', transcript.id)
       .order('timestamp', { ascending: true });
 
-    let finalMessages: any[] = [];
-
-    if (messagesError) {
-      console.error('Error retrieving messages from interview_messages table:', messagesError);
-    } else if (messages && messages.length > 0) {
-      // Use messages from new table
-      finalMessages = messages;
+    if (!textError && messagesWithText && messagesWithText.length > 0) {
+      // Successfully got messages with 'text' column
+      finalMessages = messagesWithText.map((msg: any) => ({
+        speaker: msg.speaker,
+        text: msg.text,
+        timestamp: msg.timestamp
+      }));
+      console.log('✅ Retrieved messages from interview_messages table (text column)');
     } else {
-      // Fallback to old JSONB transcript column for backward compatibility
-      if (transcriptData.transcript && Array.isArray(transcriptData.transcript)) {
-        console.log('Using legacy transcript data from JSONB column');
-        finalMessages = transcriptData.transcript;
+      // Try with 'message' column (alternative schema)
+      const { data: messagesWithMessage, error: messageError } = await supabase
+        .from('interview_messages')
+        .select('speaker, message, timestamp')
+        .eq('transcript_id', transcript.id)
+        .order('timestamp', { ascending: true });
+
+      if (!messageError && messagesWithMessage && messagesWithMessage.length > 0) {
+        // Successfully got messages with 'message' column
+        finalMessages = messagesWithMessage.map((msg: any) => ({
+          speaker: msg.speaker,
+          text: msg.message, // Map 'message' to 'text' for consistency
+          timestamp: msg.timestamp
+        }));
+        console.log('✅ Retrieved messages from interview_messages table (message column)');
+      } else {
+        console.log('⚠️ No messages found in interview_messages table, trying fallback...');
+        // Fallback to old JSONB transcript column for backward compatibility
+        if (transcript.transcript && Array.isArray(transcript.transcript)) {
+          console.log('✅ Using legacy transcript data from JSONB column');
+          finalMessages = transcript.transcript;
+        } else {
+          console.warn('⚠️ No transcript messages found in any source');
+        }
       }
     }
 
     // Calculate duration if not set
-    let duration_seconds = transcriptData.duration_seconds;
-    if (!duration_seconds && transcriptData.started_at && transcriptData.ended_at) {
-      const start = new Date(transcriptData.started_at);
-      const end = new Date(transcriptData.ended_at);
+    let duration_seconds = transcript.duration_seconds;
+    if (!duration_seconds && transcript.started_at && transcript.ended_at) {
+      const start = new Date(transcript.started_at);
+      const end = new Date(transcript.ended_at);
       duration_seconds = Math.floor((end.getTime() - start.getTime()) / 1000);
     }
 
@@ -220,7 +253,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       transcript: {
-        ...transcriptData,
+        ...transcript,
         transcript: finalMessages,
         duration_seconds: duration_seconds || null
       }

@@ -105,61 +105,65 @@ export default function SignupPage() {
       return
     }
 
-    // Always try to send custom verification email
+    // Supabase handles email verification automatically
     if (data?.user) {
-      try {
-        console.log('📧 Sending verification email via custom API...')
-        const emailResponse = await fetch('/api/send-verification-email', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            email: formData.email,
-            fullName: formData.fullName,
-            companyName: formData.companyName,
-            userId: data.user.id
-          })
-        })
-
-        const emailResult = await emailResponse.json()
-        
-        if (emailResult.success) {
-          setEmailSent(true)
-          setUserEmail(formData.email)
-          setSuccess(`Account created successfully! A verification email has been sent to ${formData.email}. Please check your inbox and spam folder.`)
-          
-          if (emailResult.previewUrl) {
-            console.log('📧 Email Preview URL:', emailResult.previewUrl)
-            // In development, show preview URL in console
-            if (process.env.NODE_ENV === 'development') {
-              console.log('💡 Development mode: Check email preview at:', emailResult.previewUrl)
-              setSuccess(`Account created! Check email preview: ${emailResult.previewUrl}`)
-            }
-          }
-        } else {
-          console.error('❌ Failed to send verification email:', emailResult)
-          setEmailSent(true) // Still show resend option
-          setUserEmail(formData.email)
-          
-          // Show detailed error message
-          const errorMsg = emailResult.error || 'Unknown error'
-          const troubleshooting = emailResult.troubleshooting
-          
-          setSuccess(`Account created successfully! However, we couldn't send the verification email.`)
-          setError(`Email error: ${errorMsg}${troubleshooting ? '. Check console for troubleshooting tips.' : ''}`)
-          
-          // Log troubleshooting info
-          if (troubleshooting) {
-            console.error('💡 Troubleshooting:', troubleshooting)
-          }
-        }
-      } catch (emailError: any) {
-        console.error('❌ Error sending verification email:', emailError)
+      if (!data.user.email_confirmed_at) {
+        // Email confirmation required - Supabase will send email automatically
         setEmailSent(true)
         setUserEmail(formData.email)
-        setSuccess(`Account created successfully! However, we couldn't send the verification email. Please use the resend button below.`)
-        setError('Email sending failed: ' + (emailError.message || 'Unknown error'))
+        setSuccess(`Account created successfully! A verification email has been sent to ${formData.email} by Supabase. Please check your inbox and spam folder.`)
+        console.log('✅ Account created. Supabase will handle email verification.')
+        console.log('📧 User data:', {
+          id: data.user.id,
+          email: data.user.email,
+          confirmation_sent_at: data.user.confirmation_sent_at,
+          email_confirmed_at: data.user.email_confirmed_at
+        })
+        console.log('💡 If email not received:')
+        console.log('   1. Check spam/junk folder (most common issue)')
+        console.log('   2. Wait 1-2 minutes (email delivery delay)')
+        console.log('   3. Verify Supabase Dashboard > Authentication > Settings > Enable email confirmations = ON')
+        console.log('   4. Check Supabase Dashboard > Project Settings > Auth > SMTP Settings (configure SMTP for production)')
+        console.log('   5. Free tier limit: max 3 emails/hour - check if limit reached')
+        console.log('   6. Check Supabase Dashboard > Logs > Auth Logs for email errors')
+        
+        // Run diagnostic check
+        try {
+          const diagnosticResponse = await fetch('/api/test-email-sending', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+              email: formData.email,
+              userId: data.user.id 
+            })
+          })
+          const diagnostic = await diagnosticResponse.json()
+          console.log('🔍 Email diagnostic result:', diagnostic)
+          
+          if (diagnostic.issue) {
+            console.error('❌ Email Issue Detected:', diagnostic.issue)
+            console.log('💡 Solution:', diagnostic.solution)
+            console.log('📋 Detailed Error:', diagnostic.detailedError)
+            
+            // Show user-friendly error if diagnostic found issue
+            if (diagnostic.issue.includes('Rate limit')) {
+              setError('Email sending limit reached. Please wait 1 hour and use "Resend Email" button.')
+            } else if (diagnostic.issue.includes('SMTP') || diagnostic.issue.includes('configuration')) {
+              setError('Email configuration issue. Please configure SMTP in Supabase Dashboard.')
+            } else if (diagnostic.issue.includes('already exists')) {
+              // Don't show error, user already exists is normal
+              console.log('ℹ️ User already exists - this is normal for resend')
+            } else {
+              console.warn('⚠️ Email diagnostic found issue:', diagnostic.issue)
+            }
+          }
+        } catch (diagError) {
+          console.warn('⚠️ Diagnostic check failed:', diagError)
+        }
+      } else {
+        // Email already confirmed (shouldn't happen on signup, but handle it)
+        setSuccess('Account created successfully!')
+        setEmailSent(false)
       }
     } else {
       setSuccess('Account created successfully!')
@@ -224,28 +228,23 @@ export default function SignupPage() {
     setSuccess('')
     
     try {
-      console.log('📧 Resending verification email via custom API...')
-      const emailResponse = await fetch('/api/send-verification-email', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          email: userEmail,
-          fullName: formData.fullName,
-          companyName: formData.companyName
-        })
-      })
-
-      const emailResult = await emailResponse.json()
+      console.log('📧 Resending verification email via Supabase...')
+      const { data, error } = await resendEmailVerification(userEmail)
       
-      if (emailResult.success) {
-        setSuccess('Verification email has been resent! Please check your inbox and spam folder.')
-        if (emailResult.previewUrl) {
-          console.log('📧 Email Preview URL:', emailResult.previewUrl)
+      if (error) {
+        const errorMsg = error.message || 'Unknown error'
+        setError(`Failed to resend email: ${errorMsg}. Check console for troubleshooting tips.`)
+        console.error('❌ Error resending email:', error)
+        
+        // Show helpful message based on error
+        if (errorMsg.includes('rate limit') || errorMsg.includes('too many')) {
+          setError('Too many emails sent. Please wait a few minutes and try again. (Free tier: max 3 emails/hour)')
+        } else if (errorMsg.includes('email')) {
+          setError(`Email error: ${errorMsg}. Please check Supabase Dashboard settings.`)
         }
       } else {
-        setError('Failed to resend email: ' + (emailResult.error || 'Unknown error'))
+        setSuccess('Verification email has been resent by Supabase! Please check your inbox and spam folder.')
+        console.log('✅ Verification email resent successfully')
       }
     } catch (emailError: any) {
       console.error('❌ Error resending email:', emailError)
